@@ -5,6 +5,7 @@
 **Public cible :** Développeurs Python confirmés, enseignants/TD L2→M1, ateliers Web3/IA.
 
 > Cette blockchain minimaliste sert de *bac à sable pédagogique* pour explorer l’intégrité par hash, un consensus hybride **Preuve de Travail (PoW) + Quorum de validateurs (≥51 %)**, des incitations économiques simples (prime anti-censure), et un DSL transactionnel modifiant un *state global* distinct des *balances* monétaires. Elle privilégie la lisibilité, la hackabilité et l’expérimentation rapide.
+Pour une vue complète de l'implémentation et de la stratégie de tests, consultez respectivement [SPECIFICATIONS.md](SPECIFICATIONS.md) et [TEST_SPECIFICATIONS.md](TEST_SPECIFICATIONS.md).
 
 ---
 
