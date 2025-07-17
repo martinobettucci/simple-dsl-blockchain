@@ -3,6 +3,8 @@ import hashlib
 import time
 from dataclasses import dataclass, field
 from typing import List, Dict
+from math import ceil
+from .wallet import verify
 from .transaction import Transaction
 from . import dsl
 
@@ -78,3 +80,30 @@ class Block:
             "signers_frozen": self.signers_frozen,
         })
         return data
+
+    def add_validator_signature(self, pubkey: str, signature: str, validator_set: List[str]) -> bool:
+        if pubkey not in validator_set:
+            return False
+        if not verify(pubkey, self.hash(), signature):
+            return False
+        self.validator_signatures[pubkey] = signature
+        return True
+
+    def finalize(self, validator_set: List[str], parent_balances: Dict[str, int], cfg):
+        quorum = ceil(len(validator_set) * cfg.QUORUM_PERCENT / 100)
+        signers = [v for v in validator_set if v in self.validator_signatures]
+        if len(signers) < quorum:
+            raise ValueError("quorum not reached")
+        premiums_total = sum(tx.premium for tx in self.transactions)
+        share = premiums_total // len(signers) if signers else 0
+        remainder = premiums_total % len(signers) if signers else 0
+        balances = parent_balances.copy()
+        balances[self.header.miner] = balances.get(self.header.miner, 0) + cfg.BLOCK_REWARD
+        for v in signers:
+            balances[v] = balances.get(v, 0) + share
+        if remainder and cfg.PREMIUM_REMAINDER_TARGET == "miner":
+            balances[self.header.miner] = balances.get(self.header.miner, 0) + remainder
+        self.balances = balances
+        self.signers_frozen = sorted(signers)
+        self.finalized = True
+        return self

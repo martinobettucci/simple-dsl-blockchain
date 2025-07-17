@@ -2,7 +2,7 @@ import json
 import os
 from typing import List
 from .config import CFG
-from .wallet import load_wallet
+from .wallet import load_wallet, sign
 from .transaction import Transaction
 from .mempool import Mempool
 from .block import Block
@@ -26,11 +26,22 @@ class Node:
         height = len(self.chain)
         block = Block.create_candidate(prev_hash, height, self.wallet['public_key'], txs, self.state, self.balances)
         block.proof_of_work(CFG.DIFFICULTY_BITS)
+        # sign with all validator wallets for demo
+        validators = json.load(open(os.path.join('blockchain_demo', 'validators.json')))['validators']
+        validator_set = [v['pubkey'] for v in validators]
+        for idx, val in enumerate(validators, start=1):
+            wallet_path = os.path.join('wallets', f'validator{idx}.json')
+            if os.path.exists(wallet_path):
+                val_wallet = load_wallet(wallet_path)
+                sig = sign(val_wallet, block.hash())
+                block.add_validator_signature(val_wallet['public_key'], sig, validator_set)
+        try:
+            block.finalize(validator_set, self.balances, CFG)
+        except ValueError:
+            pass
         self.chain.append(block)
         self.state = block.state
-        # simplistic: no validator signatures, immediate finalize
-        block.finalized = True
-        block.signers_frozen = []
+        self.balances = block.balances
         with open(os.path.join('blockchain_demo/blocks', f"{block.hash()}.json"), 'w') as f:
             json.dump(block.to_json(), f, indent=2)
 
