@@ -2,9 +2,10 @@ import os
 import json
 import shutil
 import subprocess
+import argparse
 from blockchain_demo.wallet import generate_wallet
 from blockchain_demo.block import Block, BlockHeader
-from blockchain_demo.config import CFG
+from blockchain_demo.config import CFG, load_config
 
 WALLET_DIR = "wallets"
 BLOCKS_DIR = os.path.join("blockchain_demo", "blocks")
@@ -21,14 +22,33 @@ def clean_runtime():
             os.remove(path)
 
 
-def launch_node(role: str, wallet_path: str):
+def launch_node(role: str, wallet_path: str, cfg_path: str):
     return subprocess.Popen(
-        ["python", "blockchain_demo/node.py", "--role", role, "--wallet", wallet_path],
+        [
+            "python",
+            "blockchain_demo/node.py",
+            "--config",
+            cfg_path,
+            "--local-role",
+            role,
+            "--wallet",
+            wallet_path,
+        ],
         start_new_session=True,
     )
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Bootstrap demo blockchain")
+    parser.add_argument(
+        "--config",
+        default=os.path.join("blockchain_demo", "config.py"),
+        help="Path to config file",
+    )
+    args = parser.parse_args()
+
+    load_config(args.config)
+
     clean_runtime()
 
     os.makedirs(WALLET_DIR, exist_ok=True)
@@ -82,9 +102,9 @@ def main():
         json.dump(genesis_json, f, indent=2)
 
     # launch miner and validators
-    launch_node("miner", miner_path)
+    launch_node("miner", miner_path, args.config)
     for path in validator_paths:
-        launch_node("validator", path)
+        launch_node("validator", path, args.config)
 
 if __name__ == '__main__':
     main()
