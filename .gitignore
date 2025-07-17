@@ -1,5 +1,5 @@
 # App specifics to never be committed
-blockchain_demo/validators.json
+wallets/*.json
 blockchain_demo/blocks/0000000000000000000000000000000000000000000000000000000000000000.json
 
 # Byte-compiled / optimized / DLL files
