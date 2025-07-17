@@ -1,0 +1,17 @@
+{
+  "validators": [
+    {
+      "pubkey": "483827e934914b4570fb0cdbb48a81ecbf5dd50537d262b419dc38174ccbea7ce85cebd1d5f40b6f731508705ce7f3cfd9eb95c281310d018aa9cc45a891f470",
+      "name": "Val-A"
+    },
+    {
+      "pubkey": "90fa6434d47f56bac146abfcbe9989692b345a0e1d35bce886a55ffb519a47b66c7b12dba6bf513e4ffd23c6930f5ec5e62e06840248fce2166ba4068e6e0bd3",
+      "name": "Val-B"
+    },
+    {
+      "pubkey": "80e0d45c045aa931f1eb43abef61753d475e95a543c294bbace69b7cfbbf8017f81a059e5ecb077265ac8387e5e851a779725d4a00bc6b1f599e5446f9834858",
+      "name": "Val-C"
+    }
+  ],
+  "quorum_percent": 51
+}

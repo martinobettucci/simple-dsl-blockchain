@@ -1,0 +1,7 @@
+{
+  "public_key": "90fa6434d47f56bac146abfcbe9989692b345a0e1d35bce886a55ffb519a47b66c7b12dba6bf513e4ffd23c6930f5ec5e62e06840248fce2166ba4068e6e0bd3",
+  "private_key": "b9eadcefd709b187e13a71cbb0f70bb40b567a29078766a41f9771e241bb6766",
+  "address": "90fa6434d47f56bac146abfcbe9989692b345a0e1d35bce886a55ffb519a47b66c7b12dba6bf513e4ffd23c6930f5ec5e62e06840248fce2166ba4068e6e0bd3",
+  "last_nonce": 0,
+  "local_role": "validator"
+}
