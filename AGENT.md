@@ -24,3 +24,9 @@ Testing strategy and conventions are described in
 ## Important
 - **Never** run the application with a `preprod` or `prod` profile. Use
 development/testing settings only.
+
+## Bootstrapping the demo blockchain
+
+Run `python genesys.py` from the repository root. This command creates fresh
+wallets and a genesis block, then launches a miner and three validator stubs in
+the background. The generated files are temporary and should not be committed.
