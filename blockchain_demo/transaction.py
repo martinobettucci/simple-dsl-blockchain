@@ -2,7 +2,9 @@ import json
 import hashlib
 from dataclasses import dataclass
 from typing import Dict
-from . import wallet
+from . import wallet, dsl
+from .config import CFG
+from .utils import canonical_bytes
 
 
 @dataclass
@@ -20,10 +22,15 @@ class Transaction:
             "premium": self.premium,
             "nonce": self.nonce,
         }
-        return json.dumps(data, separators=(",", ":"), sort_keys=True)
+        return canonical_bytes(data).decode()
 
     def hash(self) -> str:
-        return hashlib.sha256(self.canonical_json().encode()).hexdigest()
+        return hashlib.sha256(canonical_bytes({
+            "from": self.from_addr,
+            "script": self.script,
+            "premium": self.premium,
+            "nonce": self.nonce,
+        })).hexdigest()
 
     def sign(self, wallet_data: Dict[str, str]):
         self.signature = wallet.sign(wallet_data, self.canonical_json())
@@ -49,3 +56,32 @@ class Transaction:
             nonce=data["nonce"],
             signature=data.get("signature", ""),
         )
+
+    # Validation helpers -------------------------------------------------
+    def is_premium_valid(self, cfg=CFG) -> bool:
+        """Check if premium meets minimum requirement."""
+        return self.premium >= cfg.MIN_PREMIUM
+
+    def is_nonce_valid(self, last_nonce: int) -> bool:
+        """Check if nonce is strictly greater than last known nonce."""
+        return self.nonce > last_nonce
+
+    def has_sufficient_balance(self, balances: Dict[str, int]) -> bool:
+        """Check if sender balance covers the premium."""
+        return balances.get(self.from_addr, 0) >= self.premium
+
+    def validate(self, balances: Dict[str, int], last_nonce: int, cfg=CFG) -> bool:
+        """Full validation according to specifications."""
+        if not self.verify():
+            return False
+        if not self.is_premium_valid(cfg):
+            return False
+        if not self.is_nonce_valid(last_nonce):
+            return False
+        if not self.has_sufficient_balance(balances):
+            return False
+        try:
+            dsl.parse_script(self.script)
+        except Exception:
+            return False
+        return True

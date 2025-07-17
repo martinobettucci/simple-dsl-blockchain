@@ -7,6 +7,7 @@ from math import ceil
 from .wallet import verify
 from .transaction import Transaction
 from . import dsl
+from .utils import canonical_bytes
 
 
 def sha256d(data: bytes) -> str:
@@ -50,7 +51,7 @@ class Block:
         }
 
     def hash(self):
-        data = json.dumps(self.canonical_dict(), separators=(",", ":"), sort_keys=True).encode()
+        data = canonical_bytes(self.canonical_dict())
         return sha256d(data)
 
     @classmethod
