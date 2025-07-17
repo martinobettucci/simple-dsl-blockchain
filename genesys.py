@@ -23,7 +23,7 @@ def clean_runtime():
 
 def launch_node(role: str, wallet_path: str):
     return subprocess.Popen(
-        ["python", "blockchain_demo/node_stub.py", "--role", role, "--wallet", wallet_path],
+        ["python", "blockchain_demo/node.py", "--role", role, "--wallet", wallet_path],
         start_new_session=True,
     )
 
