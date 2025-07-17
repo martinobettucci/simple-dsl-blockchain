@@ -146,10 +146,10 @@ pip install -r requirements.txt
 
 ### 5.3 Configuration initiale
 
-1. Éditez `validators.json` pour définir le set statique des validateurs économiques.
+1. Exécutez `python genesys.py` une fois pour générer les wallets des trois validateurs,
+   créer `validators.json`, `balances.json`, `state.json` et le bloc genesis signé.
 2. Renseignez `peers.json` avec les endpoints bootstrap **sans indiquer de rôle**.
 3. Ajustez `config.py` (difficulté PoW, quorum, récompenses, ports…).
-4. (Optionnel) Pré‑allouez `balances.json` et `state.json` ou utilisez le genesis par défaut.
 
 ### 5.4 Lancer un nœud
 
