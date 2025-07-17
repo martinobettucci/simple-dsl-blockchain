@@ -1,6 +1,6 @@
 # App specifics to never be committed
 wallets/*.json
-blockchain_demo/blocks/0000000000000000000000000000000000000000000000000000000000000000.json
+blockchain_demo/blocks/*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
