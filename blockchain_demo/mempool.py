@@ -1,28 +1,48 @@
-from typing import Dict, List, Optional, Set
-from .transaction import Transaction
+"""Mempool: admission and ordering of pending transactions.
+
+Admission (§5.3): valid ECDSA signature, monotonic per-address nonce, premium
+>= MIN_PREMIUM, sufficient balance for the *cumulative* premium of all pending
+transactions from that sender, parseable DSL, and no duplicate hash.
+
+Ordering (§5.2): "premium" mode sorts by premium descending then arrival order
+(stable, anti-censorship); "fifo" mode keeps arrival order.  Premiums are only
+debited at block finalization (§5.3), so the balance check here is a soft gate
+that reserves funds while transactions wait, releasing them when popped.
+"""
+
+from typing import Dict, List, Optional, Set, Tuple
+
 from . import dsl
-from .config import CFG
+from . import config
+from .transaction import Transaction
+
 
 class Mempool:
     def __init__(self, balances: Optional[Dict[str, int]] = None, mode: Optional[str] = None):
-        self.mode = mode or CFG.TX_QUEUE_MODE
+        self.mode = mode or config.CFG.TX_QUEUE_MODE
         self._seq = 0
-        self.txs: List[tuple[int, Transaction]] = []
+        self.txs: List[Tuple[int, Transaction]] = []
         self.tx_hashes: Set[str] = set()
         self.nonces: Dict[str, int] = {}
-        self.balances = balances or {}
+        self.reserved: Dict[str, int] = {}
+        self.balances: Dict[str, int] = dict(balances or {})
+
+    def _reorder(self) -> None:
+        if self.mode == "premium":
+            self.txs.sort(key=lambda item: (-item[1].premium, item[0]))
+        else:  # fifo
+            self.txs.sort(key=lambda item: item[0])
 
     def add_tx(self, tx: Transaction) -> bool:
-        # verify signature
+        if tx.premium < config.CFG.MIN_PREMIUM:
+            return False
         if not tx.verify():
             return False
-        # verify nonce monotonic per address
         if tx.nonce <= self.nonces.get(tx.from_addr, 0):
             return False
-        # verify balance sufficient for premium
-        if self.balances.get(tx.from_addr, 0) < tx.premium:
+        reserved = self.reserved.get(tx.from_addr, 0)
+        if self.balances.get(tx.from_addr, 0) < reserved + tx.premium:
             return False
-        # pre-parse DSL script
         try:
             dsl.parse_script(tx.script)
         except Exception:
@@ -30,18 +50,47 @@ class Mempool:
         tx_hash = tx.hash()
         if tx_hash in self.tx_hashes:
             return False
-
-        self.txs.append((self._seq, tx))
-        self.tx_hashes.add(tx_hash)
-        self.nonces[tx.from_addr] = tx.nonce
-        self._seq += 1
-        if self.mode == "premium":
-            self.txs.sort(key=lambda item: (-item[1].premium, item[0]))
+        self._insert(tx, tx_hash)
         return True
 
+    def _insert(self, tx: Transaction, tx_hash: str) -> None:
+        self.txs.append((self._seq, tx))
+        self.tx_hashes.add(tx_hash)
+        self.nonces[tx.from_addr] = max(self.nonces.get(tx.from_addr, 0), tx.nonce)
+        self.reserved[tx.from_addr] = self.reserved.get(tx.from_addr, 0) + tx.premium
+        self._seq += 1
+        self._reorder()
+
     def pop_for_block(self, cap: int) -> List[Transaction]:
-        selected_pairs = self.txs[:cap]
+        selected = self.txs[:cap]
         self.txs = self.txs[cap:]
-        for _, tx in selected_pairs:
+        for _, tx in selected:
             self.tx_hashes.discard(tx.hash())
-        return [tx for _, tx in selected_pairs]
+            self.reserved[tx.from_addr] = max(0, self.reserved.get(tx.from_addr, 0) - tx.premium)
+        return [tx for _, tx in selected]
+
+    def drop_confirmed(self, chain_nonces: Dict[str, int]) -> None:
+        """Drop pooled transactions already included on-chain (nonce <= chain max)."""
+        kept: List[Tuple[int, Transaction]] = []
+        for seq, tx in self.txs:
+            if tx.nonce <= chain_nonces.get(tx.from_addr, 0):
+                self.tx_hashes.discard(tx.hash())
+                self.reserved[tx.from_addr] = max(0, self.reserved.get(tx.from_addr, 0) - tx.premium)
+            else:
+                kept.append((seq, tx))
+        self.txs = kept
+
+    def requeue(self, txs: List[Transaction]) -> None:
+        """Re-admit transactions from an expired (never finalized) candidate.
+
+        They were valid when first admitted, so signature/nonce checks are
+        skipped; duplicates already in the pool are ignored.
+        """
+        for tx in txs:
+            tx_hash = tx.hash()
+            if tx_hash in self.tx_hashes:
+                continue
+            self._insert(tx, tx_hash)
+
+    def __len__(self) -> int:
+        return len(self.txs)

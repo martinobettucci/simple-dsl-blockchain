@@ -1,2 +1,4 @@
 ecdsa
 requests
+Flask
+pytest

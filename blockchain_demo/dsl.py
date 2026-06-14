@@ -1,99 +1,87 @@
-import re
-from typing import Dict, List, Tuple, Union
+"""Minimal transactional DSL operating on the global integer ``state``.
 
-IDENT_RE = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
-INT_RE = re.compile(r"\d+")
-TOKEN_RE = re.compile(r"\s*(?:(?P<int>\d+)|(?P<ident>[a-zA-Z_][a-zA-Z0-9_]*)|(?P<op>[+-]))")
+Grammar (SPECIFICATIONS.md §20)::
+
+    SCRIPT := STMT (';' STMT)* ';'?
+    STMT   := 'let' IDENT '=' EXPR
+    EXPR   := TERM (('+'|'-') TERM)*
+    TERM   := IDENT | INT
+    IDENT  := [a-zA-Z_][a-zA-Z0-9_]*
+    INT    := [0-9]+
+
+Rules: statements run sequentially (a later statement sees earlier writes);
+only integers and ``+``/``-`` are supported; an unknown variable raises (strict
+mode, §20).  The DSL never touches balances (state vs balances separation, §5.1).
+"""
+
+import re
+from typing import Dict, List, Tuple
+
+_IDENT = r"[a-zA-Z_][a-zA-Z0-9_]*"
+_INT = r"[0-9]+"
+_TERM_RE = re.compile(rf"\s*(?P<term>{_IDENT}|{_INT})")
+_OP_RE = re.compile(r"\s*(?P<op>[+\-])")
+_STMT_RE = re.compile(rf"^\s*let\s+(?P<var>{_IDENT})\s*=\s*(?P<expr>.+)$", re.DOTALL)
+
+# A parsed expression is a list of (op, term) pairs; the first op is "+".
+Expr = List[Tuple[str, str]]
+Stmt = Tuple[str, Expr]
+
 
 class DSLExecutionError(Exception):
-    pass
+    """Raised for any DSL syntax or evaluation error."""
 
 
-def _tokenize(expr: str) -> List[str]:
-    tokens: List[str] = []
-    pos = 0
-    while pos < len(expr):
-        m = TOKEN_RE.match(expr, pos)
-        if not m:
-            raise DSLExecutionError(f"Invalid syntax near: '{expr[pos:]}'")
-        tokens.append(m.group(m.lastgroup))
-        pos = m.end()
-    return tokens
-
-
-def _parse_expression(expr: str) -> List[Union[str, Tuple[str, str]]]:
-    tokens = _tokenize(expr)
-    if not tokens:
+def _parse_expression(expr: str) -> Expr:
+    expr = expr.strip()
+    if not expr:
         raise DSLExecutionError("Empty expression")
-    # Expect TERM (OP TERM)*
-    ast: List[Union[str, Tuple[str, str]]] = []
-    expect_term = True
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        if expect_term:
-            if INT_RE.fullmatch(tok) or IDENT_RE.fullmatch(tok):
-                ast.append(tok)
-                expect_term = False
-            else:
-                raise DSLExecutionError(f"Expected term, got '{tok}'")
-        else:
-            if tok in ('+', '-'):
-                if i + 1 >= len(tokens):
-                    raise DSLExecutionError("Trailing operator")
-                term = tokens[i + 1]
-                if not (INT_RE.fullmatch(term) or IDENT_RE.fullmatch(term)):
-                    raise DSLExecutionError(f"Expected term after '{tok}'")
-                ast.append((tok, term))
-                i += 1
-            else:
-                raise DSLExecutionError(f"Expected operator, got '{tok}'")
-            expect_term = False
-        i += 1
-    if expect_term:
-        raise DSLExecutionError("Incomplete expression")
-    return ast
+    m = _TERM_RE.match(expr, 0)
+    if not m:
+        raise DSLExecutionError(f"Expected a term at start of: '{expr}'")
+    terms: Expr = [("+", m.group("term"))]
+    pos = m.end()
+    while pos < len(expr):
+        mo = _OP_RE.match(expr, pos)
+        if not mo:
+            raise DSLExecutionError(f"Expected '+' or '-' near: '{expr[pos:].strip()}'")
+        pos = mo.end()
+        mt = _TERM_RE.match(expr, pos)
+        if not mt:
+            raise DSLExecutionError(f"Expected a term after '{mo.group('op')}'")
+        terms.append((mo.group("op"), mt.group("term")))
+        pos = mt.end()
+    return terms
 
 
-def parse_script(script: str):
-    statements: List[Tuple[str, List[Union[str, Tuple[str, str]]]]] = []
-    for stmt in script.split(';'):
-        stmt = stmt.strip()
-        if not stmt:
+def parse_script(script: str) -> List[Stmt]:
+    """Parse a script into ``[(target_var, expr), ...]`` or raise."""
+    statements: List[Stmt] = []
+    for raw in script.split(";"):
+        if not raw.strip():
             continue
-        m = re.match(r"let\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)", stmt)
+        m = _STMT_RE.match(raw)
         if not m:
-            raise DSLExecutionError(f"Invalid statement: {stmt}")
-        var = m.group(1)
-        expr_str = m.group(2).strip()
-        expr_ast = _parse_expression(expr_str)
-        statements.append((var, expr_ast))
+            raise DSLExecutionError(f"Invalid statement: '{raw.strip()}'")
+        statements.append((m.group("var"), _parse_expression(m.group("expr"))))
     return statements
 
 
+def _eval_term(token: str, state: Dict[str, int]) -> int:
+    if token.isdigit():
+        return int(token)
+    if token in state:
+        return int(state[token])
+    raise DSLExecutionError(f"Unknown variable: {token}")
+
+
 def execute(script: str, state: Dict[str, int]) -> Dict[str, int]:
-    state = state.copy()
-    for var, expr_ast in parse_script(script):
-        value = _eval_expression(expr_ast, state)
-        state[var] = value
-    return state
-
-
-def _eval_expression(ast: List[Union[str, Tuple[str, str]]], state: Dict[str, int]) -> int:
-    def term_value(token: str) -> int:
-        if INT_RE.fullmatch(token):
-            return int(token)
-        if token in state:
-            return state[token]
-        raise DSLExecutionError(f"Unknown variable: {token}")
-
-    first = ast[0]
-    result = term_value(first)
-    for item in ast[1:]:
-        op, term = item
-        val = term_value(term)
-        if op == '+':
-            result += val
-        else:
-            result -= val
-    return result
+    """Execute ``script`` against a *copy* of ``state`` and return the result."""
+    new_state = dict(state)
+    for var, terms in parse_script(script):
+        total = 0
+        for op, token in terms:
+            val = _eval_term(token, new_state)
+            total += val if op == "+" else -val
+        new_state[var] = total
+    return new_state

@@ -144,35 +144,63 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 5.3 Configuration initiale
-
-1. Éditez `validators.json` pour définir le set statique des validateurs économiques.
-2. Renseignez `peers.json` avec les endpoints bootstrap **sans indiquer de rôle**.
-3. Ajustez `config.py` (difficulté PoW, quorum, récompenses, ports…).
-4. (Optionnel) Pré‑allouez `balances.json` et `state.json` ou utilisez le genesis par défaut.
-
-### 5.4 Lancer un nœud
+### 5.3 Démo en une commande
 
 ```bash
-python node.py --config config.py --local-role miner
-# ou
-python node.py --config config.py --local-role validator
-# ou nœud mixte
-python node.py --config config.py --local-role both
+python genesys.py
 ```
 
-Au démarrage, le nœud lit `peers.json`, initie un *handshake /status* puis un *challenge /role\_challenge* pour authentifier les validateurs.
+Ce script :
+
+1. crée 5 wallets (1 mineur, 3 validateurs, 1 utilisateur) dans `runtime/wallets/` ;
+2. écrit les fichiers partagés `runtime/validators.json` et `runtime/peers.json` (endpoints **sans rôle**) ;
+3. sème un bloc genesis identique dans le dossier de données de chaque nœud (`runtime/<nœud>/`) ;
+4. lance **1 mineur + 3 validateurs + l'explorer** en process séparés ;
+5. soumet quelques transactions de démo (premiums variés) pour que la chaîne produise des blocs.
+
+Ouvrez ensuite l'explorer : **[http://127.0.0.1:8600](http://127.0.0.1:8600)**.
+Ajoutez `--no-demo-tx` pour bootstraper sans transactions automatiques. `Ctrl-C` arrête tout.
+
+### 5.4 Lancer un nœud manuellement
+
+Chaque nœud possède son propre dossier de données et un port ; les rôles des pairs sont découverts au runtime (handshake `/status` + challenge `/role_challenge`).
+
+```bash
+python -m blockchain_demo.node \
+  --config config.demo.json --local-role miner \
+  --wallet runtime/wallets/miner.json --port 9001 \
+  --data-dir runtime/miner \
+  --peers runtime/peers.json --validators runtime/validators.json
+```
+
+`--local-role` ∈ `{miner, validator, both, full}`. L'explorer se lance de même :
+
+```bash
+python -m blockchain_demo.explorer \
+  --data-dir runtime/miner \
+  --validators runtime/validators.json --peers runtime/peers.json --port 8600
+```
 
 ### 5.5 Envoyer une transaction
 
+Une transaction signée ECDSA est soumise au mineur via `POST /tx` :
+
 ```bash
-python wallet.py send-tx \
-  --wallet wallets/alice.json \
-  --script "let counter = counter + 1" \
-  --premium 2
+python - <<'PY'
+import requests
+from blockchain_demo.wallet import load_wallet, next_nonce, sign
+from blockchain_demo.transaction import Transaction
+w = load_wallet("runtime/wallets/user.json")
+tx = Transaction(w["public_key"], "let counter = counter + 1", premium=3,
+                 nonce=next_nonce(w, "runtime/wallets/user.json"))
+tx.sign(w)
+print(requests.post("http://127.0.0.1:9001/tx", json=tx.to_json()).json())
+PY
 ```
 
-La transaction est signée ECDSA, envoyée aux pairs, et rejoindra le mempool du mineur.
+Le mineur la trie par premium (anti‑censure), l'inclut dans un bloc candidat, le mine (PoW), puis les validateurs signent jusqu'au quorum → finalisation et distribution des récompenses.
+
+> **Note d'implémentation (v5.1).** Le `block_hash` d'identité est calculé sur `{header, transactions, state}` **sans** les `balances` : les récompenses/`signers_frozen` ne sont connues qu'à la finalisation (et les signatures ECDSA sont déterministes mais postérieures), donc le hash signé par les validateurs doit rester stable de la création à la finalisation. L'intégrité des `balances` finalisées est revérifiée à la réception en recalculant la distribution depuis le parent. Les premiums sont **débités à la finalisation** ; seul le `BLOCK_REWARD` est créé (conservation de la masse monétaire).
 
 ---
 
