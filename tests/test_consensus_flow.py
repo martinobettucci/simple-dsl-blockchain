@@ -29,11 +29,16 @@ def _store(data_dir):
 
 @pytest.fixture
 def cluster(cfg_fast, tmp_path, make_wallet, validators, monkeypatch):
+    from blockchain_demo.config import governable_dict
+    from blockchain_demo.governance import GovernanceState
     miner = make_wallet("miner")
     user = make_wallet("user")
     vset = [v["public_key"] for v in validators]
+    g0 = GovernanceState(validators=sorted(vset), config=governable_dict(cfg_fast),
+                         miss_counts={v: 0 for v in vset}, last_signed_height={v: 0 for v in vset})
     genesis = Block(BlockHeader(GENESIS_HASH, 0, 0, 0, "genesis"), [],
-                    {"counter": 0}, {user["public_key"]: 1000}, finalized=True)
+                    {"counter": 0}, {user["public_key"]: 1000}, finalized=True,
+                    governance=g0.to_snapshot())
 
     specs = [("miner", miner, "miner", 9101),
              ("v1", validators[0], "validator", 9102),
@@ -45,7 +50,7 @@ def cluster(cfg_fast, tmp_path, make_wallet, validators, monkeypatch):
         store = _store(os.path.join(tmp_path, name))
         store.save_block(genesis)
         peers = [PeerInfo("127.0.0.1", p) for (_, _, _, p) in specs if p != port]
-        st = ChainState(cfg_fast, w, role, port, store, vset, peers)
+        st = ChainState(cfg_fast, w, role, port, store, peers)
         registry[port], states[name] = st, st
     for st in states.values():
         for p in st.peers:
@@ -94,7 +99,8 @@ def test_quorum_finalize_and_convergence(cluster):
     assert tip.finalized
     assert tip.state["counter"] == 1
     # quorum freeze: exactly the quorum of signers paid
-    assert len(tip.signers_frozen) >= states["miner"].quorum
+    from blockchain_demo.block import calc_quorum
+    assert len(tip.signers_frozen) >= calc_quorum(len(cluster["vset"]), cfg.QUORUM_PERCENT)
     # miner reward credited
     assert tip.balances[miner_pub] >= cfg.BLOCK_REWARD
     # premium (6) split among the frozen signers

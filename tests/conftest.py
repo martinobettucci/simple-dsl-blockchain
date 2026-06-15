@@ -49,8 +49,15 @@ def tmp_data_dir(tmp_path):
 
 
 @pytest.fixture
-def genesis_block():
-    """Standard genesis: zero hash, height 0, finalized, counter state."""
+def genesis_block(validators, cfg_fast):
+    """Standard genesis embedding the initial governance snapshot (validators +
+    bootstrap config), so the chain can be folded into governance state."""
+    from blockchain_demo.config import governable_dict
+    from blockchain_demo.governance import GovernanceState
+    vset = sorted(v["public_key"] for v in validators)
+    g0 = GovernanceState(validators=vset, config=governable_dict(cfg_fast),
+                         miss_counts={v: 0 for v in vset},
+                         last_signed_height={v: 0 for v in vset})
     header = BlockHeader(prev_hash=GENESIS_HASH, height=0, nonce=0, timestamp=0, miner="genesis")
     return Block(
         header=header,
@@ -58,4 +65,5 @@ def genesis_block():
         state={"counter": 0},
         balances={},
         finalized=True,
+        governance=g0.to_snapshot(),
     )

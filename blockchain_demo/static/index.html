@@ -24,12 +24,28 @@
     </section>
 
     <section>
-      <h2>Validators <small>(signed vs paid)</small></h2>
+      <h2>Validators <small>(derived from the chain · signed vs paid · liveness)</small></h2>
       <table id="validators">
-        <thead><tr><th>name</th><th>pubkey</th><th>signed</th><th>paid blocks</th></tr></thead>
+        <thead><tr><th>pubkey</th><th>signed</th><th>paid blocks</th><th>missed quorum</th><th>last signed</th></tr></thead>
         <tbody></tbody>
       </table>
       <p id="quorum"></p>
+    </section>
+
+    <section>
+      <h2>Governance <small>(on-chain validator set &amp; protocol config)</small></h2>
+      <h3>Open validator applications</h3>
+      <table id="applications">
+        <thead><tr><th>candidate</th><th>approve votes</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h3>Pending config proposals</h3>
+      <table id="proposals">
+        <thead><tr><th>proposal</th><th>changes</th><th>votes</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h3>Active protocol config <small>(folded from genesis + config-change txs)</small></h3>
+      <pre id="govconfig">…</pre>
     </section>
 
     <section>

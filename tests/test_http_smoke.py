@@ -26,17 +26,22 @@ def _free_port():
 @pytest.mark.network
 @pytest.mark.slow
 def test_node_http_endpoints(cfg_fast, tmp_path, make_wallet, validators):
+    from blockchain_demo.config import governable_dict
+    from blockchain_demo.governance import GovernanceState
     user = make_wallet("user")
     vset = [v["public_key"] for v in validators]
+    g0 = GovernanceState(validators=sorted(vset), config=governable_dict(cfg_fast),
+                         miss_counts={v: 0 for v in vset}, last_signed_height={v: 0 for v in vset})
     genesis = Block(BlockHeader(GENESIS_HASH, 0, 0, 0, "genesis"), [],
-                    {"counter": 0}, {user["public_key"]: 100}, finalized=True)
+                    {"counter": 0}, {user["public_key"]: 100}, finalized=True,
+                    governance=g0.to_snapshot())
     dd = os.path.join(tmp_path, "n")
     os.makedirs(os.path.join(dd, "blocks"))
     os.makedirs(os.path.join(dd, "pending"))
     store = ChainStore(os.path.join(dd, "blocks"), os.path.join(dd, "pending"),
                        os.path.join(dd, "state.json"), os.path.join(dd, "balances.json"))
     store.save_block(genesis)
-    state = ChainState(cfg_fast, validators[0], "validator", 0, store, vset, peers=[])
+    state = ChainState(cfg_fast, validators[0], "validator", 0, store, peers=[])
     srv = make_server("127.0.0.1", _free_port(), create_app(state), threaded=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_port}"

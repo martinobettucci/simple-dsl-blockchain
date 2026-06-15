@@ -2,7 +2,7 @@
 
 **Projet :** Blockchain Programmable Pédagogique (Python)
 
-> Version : **v5**
+> Version : **v6** — voir **§23 (Gouvernance on‑chain, Archive, Sync & Mesh)** qui dérive le validator set et la config de la chaîne et remplace `validators.json` ; le socle ci‑dessous (PoW + quorum, anti‑censure, forks) reste valable. Base
 > Changements clés v5 : Découverte dynamique des rôles réseau (miner / validator / both) au lancement, **peers.json sans rôles** (endpoints uniquement), **preuve de rôle par challenge-signature** pour les validateurs, validator set statique connu d’avance (validators.json), intégration complète avec PoW + quorum, anti-censure par premium, signatures agrégées non ordonnées, stockage par bloc / forks.
 > Public cible : Développeur senior Python (implémentation pédagogique robuste).
 
@@ -696,6 +696,90 @@ Blockchain éducative Python combinant **Preuve de Travail + Quorum de Validateu
 
 ---
 
-### Fin du document (v5)
+## 23. Gouvernance on‑chain, Archive, Sync & Mesh (v6)
+
+Cette section décrit l'évolution v6. Elle **remplace** la notion de validator set statique
+(`validators.json`) et de config figée (`config.demo.json` partagé) par un état **dérivé de la
+chaîne**, et ajoute la synchronisation réseau. Le reste du socle v5 (PoW, quorum, anti‑censure,
+forks, signatures non ordonnées, séparation state/balances) est inchangé.
+
+### 23.1 Principe : tout est dérivé de la chaîne
+Seule donnée commune en dur : le **bloc genesis**, qui embarque un *snapshot de gouvernance*
+`G_0` = { validateurs initiaux, config gouvernable, balances/state initiaux }. Tout le reste
+(validator set courant, config active, candidatures, votes, compteurs de liveness) est obtenu en
+**rejouant** les transactions de gouvernance via un *fold* déterministe (`governance.apply_block`).
+
+### 23.2 Transactions de gouvernance
+`Transaction` gagne `type` (défaut `"dsl"`) et `data`. Pour les tx DSL héritées
+(`type=="dsl"` et `data=={}`), la forme canonique reste les 4 clés d'origine → hash/signatures
+inchangés. Types de gouvernance (ne mutent **pas** `state`, mais paient premium + nonce comme toute tx) :
+
+| type               | data                          | effet (résolu au fold)                        |
+|--------------------|-------------------------------|-----------------------------------------------|
+| `validator_apply`  | `{}`                          | enregistre une candidature (`from` = candidat)|
+| `validator_vote`   | `{"candidate": pubkey}`       | approbation par un validateur courant          |
+| `config_propose`   | `{"changes": {CLE: val, …}}`  | proposition (id = `tx.hash()`, proposeur = 1er vote) |
+| `config_vote`      | `{"pid": id}`                 | approbation d'une proposition de config        |
+
+Seules les clés de `GOVERNABLE_KEYS` sont modifiables on‑chain.
+
+### 23.3 État dérivé & fold déterministe
+`GovernanceState` = { `validators`, `config`, `applications{cand→votants}`,
+`config_proposals{pid→{changes,votes}}`, `miss_counts`, `last_signed_height` }.
+`apply_block(G_{h-1}, bloc_h)` applique, **dans cet ordre imposé** :
+1. **Liveness** sur `G_{h-1}.validators` via `signers_frozen` du bloc h (signé → `last_signed=h`, sinon `miss_counts+=1`) ;
+2. **govtxs** dans l'ordre (votes comptés seulement si émetteur ∈ `G_{h-1}.validators`) ;
+3. **admissions** : candidat avec `|votes ∩ G_{h-1}.validators| ≥ quorum` ajouté (exempté de miss ce bloc) ;
+4. **config** : proposition avec votes ≥ quorum appliquée ;
+5. **retraits** (déterministes, triés) : `h - last_signed > N` **ou** `miss ≥ X`, avec **plancher** `VALIDATOR_FLOOR`.
+Tout est trié (déterminisme). Le résultat `G_h` est stocké dans `block.governance`, **exclu du hash**
+d'identité (comme `balances`) et **re‑dérivé/vérifié** à la réception.
+
+### 23.4 Règle temporelle (anti‑circularité)
+Le snapshot du **parent** `G_{h-1}` gouverne le bloc h : qui peut signer, le **quorum**, la
+**difficulté PoW** et la **config active**. Les govtxs du bloc h produisent `G_h`, qui gouverne h+1
+(« effet au bloc suivant »). Le set/quorum/config deviennent donc **dépendants de la hauteur** ; chaque
+branche de fork dérive son propre état (fold le long de l'ancêtre du bloc, mémoïsé par hash).
+
+### 23.5 Paramètres gouvernance (config)
+`QUORUM_PERCENT` (admission/config/finalisation), `LIVENESS_OFFLINE_N`, `LIVENESS_MISS_X`,
+`VALIDATOR_FLOOR` (gouvernables) ; `SIGNATURE_GRACE` (bootstrap, voir §23.6).
+
+### 23.6 Finalisation équitable & déterministe
+`signers_frozen` étant exclu du hash, deux finaliseurs concurrents pourraient figer des ensembles de
+signataires différents pour un même bloc id → divergence silencieuse. Règle v6 : **le proposeur est le
+seul finaliseur**. Il gèle les signataires quand **tous** les validateurs courants ont signé, ou après
+`SIGNATURE_GRACE` secondes avec au moins le quorum. Ainsi un validateur en ligne mais au‑delà du quorum
+strict est **crédité** (pas de hors‑quorum injuste → pas de retrait abusif), et `signers_frozen` a un
+unique décideur (déterministe). `SIGNATURE_GRACE=0` → finalisation immédiate au quorum (tests).
+
+### 23.7 Rôle archive, sync & referral
+* **archive** : rôle sans wallet ; ne mine/signe/vote jamais ; **construit le genesis** depuis
+  `--genesis-spec` ; stocke passivement tous les blocs finalisés ; sert `/genesis` et `/blocks?since=H`.
+* **bootstrap** : un nouveau nœud démarre avec son wallet + un seul `--bootstrap`. Via `/status` il
+  apprend si le pair est une archive (→ sync direct) ou récupère `archive_addr` (**referral**) et garde
+  ce lien pour un **sync incrémental** périodique.
+* **sync** : le genesis est installé puis les blocs paginés sont **re‑injectés dans le chemin de
+  validation finalisée** (`on_block_finalized`) — jamais d'ajout « de confiance ».
+
+### 23.8 Mesh (gossip de pairs)
+Chaque nœud maintient **sa** liste de pairs (`/peers`, `/announce`), unie par gossip (`merge_peers`) et
+sondée par challenge‑signature (`probe_peer`). Plus de `peers.json` partagé. Les proposions de blocs
+sont diffusées à **tous** les pairs (chacun se filtre : ne signe que s'il est validateur dans `G_{parent}`),
+ce qui évite qu'un validateur non encore découvert accumule des hors‑quorum pendant la formation du mesh.
+
+### 23.9 Nouveaux endpoints
+`GET /status` (+`role`, `is_archive`, `archive_addr`, `genesis_fingerprint`), `GET /peers`,
+`POST /announce`, `GET /genesis`, `GET /blocks?since=H&limit=L`, `GET /governance`. L'explorer expose
+aussi `/governance` et dérive `/validators` (avec `miss_count`/`last_signed`) de la chaîne.
+
+### 23.10 Ce qui est remplacé / déprécié
+`validators.json` (→ snapshot de gouvernance dérivé), `peers.json` partagé (→ `--bootstrap` + mesh),
+config partagée figée (→ config gouvernable embarquée au genesis + tx `config_propose/vote`),
+`--validators`/`--peers` (→ `--bootstrap`, `--genesis-spec`).
+
+---
+
+### Fin du document (v6)
 
 Pour toute évolution, incrémenter version et documenter les changements.

@@ -7,32 +7,34 @@ makes the economics visible (all ``validator_signatures`` vs the paid
 """
 
 import argparse
-import json
 import os
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 from flask import Flask, jsonify, send_from_directory
 
-from .network import ChainStore, load_peers, discover_peers
-from .block import block_id, calc_quorum
+from . import network
+from .network import ChainStore
+from .block import block_id
+from .governance import fold_chain, quorum_at, GovernanceState
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
 def create_app(blocks_dir: str, pending_dir: str, state_file: str, bal_file: str,
-               validators_file: str = None, peers_file: str = None) -> Flask:
+               node_url: str = None) -> Flask:
     app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
     store = ChainStore(blocks_dir, pending_dir, state_file, bal_file)
 
-    def validators_doc() -> Dict:
-        if validators_file and os.path.exists(validators_file):
-            with open(validators_file) as f:
-                return json.load(f)
-        return {"validators": [], "quorum_percent": 51}
-
-    def quorum_of(doc: Dict) -> int:
-        n = len(doc.get("validators", []))
-        return calc_quorum(n, doc.get("quorum_percent", 51)) if n else 0
+    def gov_tip() -> Tuple[Optional[GovernanceState], list]:
+        """Fold the canonical chain into its tip governance state (validators +
+        config derived from the chain, no shared files)."""
+        ch = store.select_canonical_chain(store.load_all_blocks())
+        if not ch:
+            return None, ch
+        try:
+            return fold_chain(ch)[-1], ch
+        except Exception:
+            return None, ch
 
     @app.get("/")
     def index():
@@ -61,8 +63,8 @@ def create_app(blocks_dir: str, pending_dir: str, state_file: str, bal_file: str
 
     @app.get("/pending")
     def pending():
-        doc = validators_doc()
-        quorum = quorum_of(doc)
+        gtip, _ = gov_tip()
+        quorum = quorum_at(gtip) if gtip else 0
         out = [{"hash": bid, "height": b.header.height, "miner": b.header.miner,
                 "signatures": len(b.validator_signatures), "signers_frozen": b.signers_frozen,
                 "quorum": quorum, "finalized": b.finalized}
@@ -104,11 +106,14 @@ def create_app(blocks_dir: str, pending_dir: str, state_file: str, bal_file: str
 
     @app.get("/validators")
     def validators():
-        doc = validators_doc()
-        stats = {e["pubkey"]: {"pubkey": e["pubkey"], "name": e.get("name"),
-                               "signed": 0, "paid_blocks": 0}
-                 for e in doc.get("validators", [])}
-        for b in store.select_canonical_chain(store.load_all_blocks()):
+        gtip, ch = gov_tip()
+        if gtip is None:
+            return jsonify({"validators": [], "quorum": 0, "count": 0, "config": {}})
+        stats = {v: {"pubkey": v, "signed": 0, "paid_blocks": 0,
+                     "miss_count": gtip.miss_counts.get(v, 0),
+                     "last_signed": gtip.last_signed_height.get(v, 0)}
+                 for v in gtip.validators}
+        for b in ch:
             for pk in b.validator_signatures:
                 if pk in stats:
                     stats[pk]["signed"] += 1
@@ -116,7 +121,15 @@ def create_app(blocks_dir: str, pending_dir: str, state_file: str, bal_file: str
                 if pk in stats:
                     stats[pk]["paid_blocks"] += 1
         return jsonify({"validators": list(stats.values()),
-                        "quorum": quorum_of(doc), "count": len(stats)})
+                        "quorum": quorum_at(gtip), "count": len(stats), "config": gtip.config})
+
+    @app.get("/governance")
+    def governance():
+        gtip, _ = gov_tip()
+        if gtip is None:
+            return jsonify({"validators": [], "quorum": 0, "config": {},
+                            "applications": {}, "config_proposals": {}})
+        return jsonify(gtip.to_snapshot())
 
     @app.get("/diff/<bhash>")
     def diff(bhash):
@@ -136,12 +149,14 @@ def create_app(blocks_dir: str, pending_dir: str, state_file: str, bal_file: str
 
     @app.get("/peers")
     def peers():
-        if not peers_file or not os.path.exists(peers_file):
+        # The mesh peer list is live consensus state; proxy it from a node if one
+        # is linked, otherwise report none (the explorer is disk-only by default).
+        if not node_url:
             return jsonify({"peers": []})
-        plist = load_peers(peers_file)
-        vset = [x["pubkey"] for x in validators_doc().get("validators", [])]
-        discover_peers(plist, vset)
-        return jsonify({"peers": [p.to_dict() for p in plist]})
+        try:
+            return jsonify({"peers": network.fetch_peers(node_url)})
+        except Exception:
+            return jsonify({"peers": []})
 
     return app
 
@@ -149,8 +164,7 @@ def create_app(blocks_dir: str, pending_dir: str, state_file: str, bal_file: str
 def main() -> None:
     parser = argparse.ArgumentParser(description="Blockchain web explorer")
     parser.add_argument("--data-dir", required=True)
-    parser.add_argument("--validators", required=True)
-    parser.add_argument("--peers", required=True)
+    parser.add_argument("--node-url", help="optional node endpoint to proxy live /peers")
     parser.add_argument("--port", type=int, default=8600)
     args = parser.parse_args()
     app = create_app(
@@ -158,7 +172,7 @@ def main() -> None:
         os.path.join(args.data_dir, "pending"),
         os.path.join(args.data_dir, "state.json"),
         os.path.join(args.data_dir, "balances.json"),
-        args.validators, args.peers,
+        node_url=args.node_url,
     )
     print(f"Explorer on http://127.0.0.1:{args.port}")
     app.run(host="127.0.0.1", port=args.port, threaded=True, debug=False, use_reloader=False)

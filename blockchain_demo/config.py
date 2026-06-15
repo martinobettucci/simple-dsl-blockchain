@@ -11,7 +11,7 @@ resolution for a given node is done explicitly via :func:`apply_data_dir`, which
 rewrites the per-node storage paths under a dedicated data directory.
 """
 
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, fields, replace
 import json
 import importlib.util
 import os
@@ -33,10 +33,25 @@ class Config:
     VALIDATORS_FILE: str = "validators.json"
     PEERS_FILE: str = "peers.json"
     API_PORT: int = 8545
-    LOCAL_ROLE: str = "miner"               # miner / validator / both / full
+    LOCAL_ROLE: str = "miner"               # miner / validator / both / full / archive
     BLOCK_CANDIDATE_TTL: int = 120
+    SIGNATURE_GRACE: float = 0.0            # secs the proposer waits to gather all signatures
     PREMIUM_REFUND_ON_FAIL: bool = True
     PREMIUM_REMAINDER_TARGET: str = "miner"  # "miner" or "burn"
+    # On-chain governance (liveness-based auto-removal + safety floor)
+    LIVENESS_OFFLINE_N: int = 20            # remove if unsigned for more than N blocks
+    LIVENESS_MISS_X: int = 10               # remove if cumulative missed-quorum reaches X
+    VALIDATOR_FLOOR: int = 1                # never auto-remove below this many validators
+    BOOTSTRAP: str = ""                     # bootstrap peer "host:port" (per-node, CLI)
+
+
+# Protocol parameters that can be changed on-chain via a config_propose/config_vote
+# transaction.  Everything else is per-node bootstrap/CLI state.
+GOVERNABLE_KEYS = {
+    "BLOCK_REWARD", "MIN_PREMIUM", "QUORUM_PERCENT", "DIFFICULTY_BITS",
+    "BLOCK_TX_CAP", "PREMIUM_REMAINDER_TARGET", "TX_QUEUE_MODE",
+    "LIVENESS_OFFLINE_N", "LIVENESS_MISS_X", "VALIDATOR_FLOOR",
+}
 
 
 # Global, replaced by load_config.  Modules that need defaults import CFG.
@@ -54,6 +69,14 @@ def _validate(cfg: Config) -> None:
         raise ValueError("DIFFICULTY_BITS must be between 1 and 256")
     if cfg.BLOCK_TX_CAP < 1:
         raise ValueError("BLOCK_TX_CAP must be >= 1")
+    if cfg.LIVENESS_OFFLINE_N < 1:
+        raise ValueError("LIVENESS_OFFLINE_N must be >= 1")
+    if cfg.LIVENESS_MISS_X < 1:
+        raise ValueError("LIVENESS_MISS_X must be >= 1")
+    if cfg.VALIDATOR_FLOOR < 1:
+        raise ValueError("VALIDATOR_FLOOR must be >= 1")
+    if cfg.SIGNATURE_GRACE < 0:
+        raise ValueError("SIGNATURE_GRACE must be >= 0")
 
 
 def load_config(path: str) -> Config:
@@ -84,6 +107,22 @@ def load_config(path: str) -> Config:
     global CFG
     CFG = cfg
     return cfg
+
+
+def effective_config(base: Config, gov_config: dict) -> Config:
+    """Overlay the on-chain governable values onto a node's bootstrap config.
+
+    Used so consensus code (PoW difficulty, quorum, reward, tx cap…) reads the
+    config that is active *at a given chain position* (the parent governance
+    snapshot) while keeping per-node bootstrap fields (paths, ports) intact.
+    """
+    overrides = {k: gov_config[k] for k in GOVERNABLE_KEYS if k in gov_config}
+    return replace(base, **overrides)
+
+
+def governable_dict(cfg: Config) -> dict:
+    """The governable subset of a config, for embedding in the genesis snapshot."""
+    return {k: getattr(cfg, k) for k in GOVERNABLE_KEYS}
 
 
 def apply_data_dir(cfg: Config, data_dir: str) -> Config:

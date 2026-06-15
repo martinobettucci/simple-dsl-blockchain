@@ -41,13 +41,17 @@ def test_load_peers_excludes_self(tmp_path):
     assert [pe.port for pe in peers] == [9002]
 
 
-def test_broadcast_proposal_prefers_validators(monkeypatch):
+def test_broadcast_proposal_goes_to_all_peers(monkeypatch):
+    # Proposals are broadcast to every peer; each node self-filters and only
+    # signs if it is a validator in the parent governance snapshot.  Sending to
+    # all (not just already-probed validators) avoids a not-yet-discovered
+    # validator unfairly accruing missed-quorum counts while the mesh forms.
     calls = []
     monkeypatch.setattr(network, "_post", lambda peer, path, body, timeout=2.0: calls.append((peer.port, path)))
     p1, p2, p3 = PeerInfo("h", 1), PeerInfo("h", 2), PeerInfo("h", 3)
     p2.is_validator = True
     network.broadcast_block_proposal([p1, p2, p3], {"x": 1})
-    assert calls == [(2, "/block_proposal")]
+    assert sorted(calls) == [(1, "/block_proposal"), (2, "/block_proposal"), (3, "/block_proposal")]
 
 
 def test_broadcast_proposal_fallback_to_all(monkeypatch):

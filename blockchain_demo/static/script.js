@@ -14,9 +14,9 @@ function el(tag, html) {
 
 async function refresh() {
   try {
-    const [chain, balances, validators, pending, branches, state] = await Promise.all([
+    const [chain, balances, validators, pending, branches, state, governance] = await Promise.all([
       get("/chain"), get("/balances"), get("/validators"),
-      get("/pending"), get("/branches"), get("/state"),
+      get("/pending"), get("/branches"), get("/state"), get("/governance"),
     ]);
 
     document.getElementById("tip").textContent = "height: " + chain.height;
@@ -37,13 +37,16 @@ async function refresh() {
     validators.validators.forEach((v) => {
       const tr = el("tr");
       tr.append(
-        el("td", v.name || "—"),
         el("td", `<span class="hash">${short(v.pubkey)}</span>`),
         el("td", String(v.signed)),
-        el("td", `<span class="paid">${v.paid_blocks}</span>`)
+        el("td", `<span class="paid">${v.paid_blocks}</span>`),
+        el("td", String(v.miss_count)),
+        el("td", String(v.last_signed))
       );
       vbody.append(tr);
     });
+
+    renderGovernance(governance);
 
     const pbody = document.querySelector("#pending tbody");
     pbody.innerHTML = "";
@@ -70,6 +73,46 @@ async function refresh() {
   }
 }
 
+function renderGovernance(gov) {
+  const abody = document.querySelector("#applications tbody");
+  abody.innerHTML = "";
+  Object.entries(gov.applications || {}).forEach(([cand, voters]) => {
+    const tr = el("tr");
+    tr.append(
+      el("td", `<span class="hash">${short(cand)}</span>`),
+      el("td", `${voters.length} / ${gov.quorum}`)
+    );
+    abody.append(tr);
+  });
+  if (!Object.keys(gov.applications || {}).length) {
+    abody.append(el("tr", `<td colspan="2" class="hash">none</td>`));
+  }
+
+  const pbody = document.querySelector("#proposals tbody");
+  pbody.innerHTML = "";
+  Object.entries(gov.config_proposals || {}).forEach(([pid, p]) => {
+    const tr = el("tr");
+    tr.append(
+      el("td", `<span class="hash">${short(pid)}</span>`),
+      el("td", `<span class="mono">${JSON.stringify(p.changes)}</span>`),
+      el("td", `${(p.votes || []).length} / ${gov.quorum}`)
+    );
+    pbody.append(tr);
+  });
+  if (!Object.keys(gov.config_proposals || {}).length) {
+    pbody.append(el("tr", `<td colspan="3" class="hash">none</td>`));
+  }
+
+  document.getElementById("govconfig").textContent = JSON.stringify(gov.config || {}, null, 2);
+}
+
+const GOV_LABEL = {
+  validator_apply: "🪪 apply as validator",
+  validator_vote: "🗳️ vote validator",
+  config_propose: "⚙️ propose config",
+  config_vote: "🗳️ vote config",
+};
+
 function renderChain(chain) {
   const root = document.getElementById("chain");
   root.innerHTML = "";
@@ -89,9 +132,12 @@ function renderChain(chain) {
       <div>state: <span class="mono">${JSON.stringify(b.state)}</span></div>
       <div>signatures: ${sigs || "—"} <span class="hash">(💰 = paid / frozen)</span></div>`;
     (b.transactions || []).forEach((t) => {
+      const kind = (t.type && t.type !== "dsl")
+        ? `<span class="pill">${GOV_LABEL[t.type] || t.type}</span> <span class="mono">${JSON.stringify(t.data || {})}</span>`
+        : `<span class="mono">${t.script}</span>`;
       html += `<div class="tx">from ${short(t.from)} ·
         <span class="premium">premium ${t.premium}</span> ·
-        nonce ${t.nonce} · <span class="mono">${t.script}</span></div>`;
+        nonce ${t.nonce} · ${kind}</div>`;
     });
     div.innerHTML = html;
     root.append(div);

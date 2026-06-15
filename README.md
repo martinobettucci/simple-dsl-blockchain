@@ -14,7 +14,9 @@ Pour une vue complète de l'implémentation et de la stratégie de tests, consul
 Construisez, minez, signez et visualisez une mini‑blockchain en Python :
 
 * Chaîne de blocs hashés immuables.
-* PoW + quorum numérique de validateurs statiques.
+* PoW + quorum numérique (≥51 %) sur un **validator set dérivé de la chaîne** (gouvernance on‑chain, plus de fichier statique).
+* **Gouvernance on‑chain** : on devient validateur par candidature + vote (quorum) ; retrait **automatique** si hors‑ligne > N blocs ou trop souvent hors‑quorum ; la config protocole se change par transaction (vote au quorum).
+* **Vrai mesh** : un nœud **archive** (sans wallet) crée le genesis et sert de source de **sync** ; un nouveau nœud démarre avec un seul `--bootstrap` et apprend ses pairs par gossip.
 * Anti‑censure démonstrative via **ordonnancement par premium** (payez → passez en priorité).
 * Transactions signées ECDSA + DSL embarqué pour muter un *state global JSON*.
 * **Séparation stricte** *state* vs *balances* (le DSL ne touche jamais à l’argent).
@@ -152,33 +154,38 @@ python genesys.py
 
 Ce script :
 
-1. crée 5 wallets (1 mineur, 3 validateurs, 1 utilisateur) dans `runtime/wallets/` ;
-2. écrit les fichiers partagés `runtime/validators.json` et `runtime/peers.json` (endpoints **sans rôle**) ;
-3. sème un bloc genesis identique dans le dossier de données de chaque nœud (`runtime/<nœud>/`) ;
-4. lance **1 mineur + 3 validateurs + l'explorer** en process séparés ;
-5. soumet quelques transactions de démo (premiums variés) pour que la chaîne produise des blocs.
+1. crée les wallets (mineur, 3 validateurs, 1 utilisateur, 1 candidat) dans `runtime/wallets/` ;
+2. écrit un **spec genesis** (`runtime/genesis_spec.json`) : set de validateurs initial + config gouvernable + balances — la **seule** donnée commune en dur ;
+3. lance le nœud **archive** (sans wallet) qui **construit le bloc genesis** depuis ce spec et sert la sync ;
+4. lance **1 mineur + 3 validateurs** avec `--bootstrap=<archive>` : chacun **synchronise** la chaîne depuis l'archive puis découvre le mesh par gossip (plus aucun `validators.json`/`peers.json` partagé) ;
+5. lance l'explorer (qui **dérive** validateurs/config de la chaîne) ;
+6. soumet des transactions de démo, puis une **démo de gouvernance** : un nouveau nœud rejoint via l'archive, **candidate** et est **voté validateur** (admission au quorum).
 
-Ouvrez ensuite l'explorer : **[http://127.0.0.1:8600](http://127.0.0.1:8600)**.
-Ajoutez `--no-demo-tx` pour bootstraper sans transactions automatiques. `Ctrl-C` arrête tout.
+Ouvrez ensuite l'explorer : **[http://127.0.0.1:8600](http://127.0.0.1:8600)** (voir le panneau **Governance** et `/governance`).
+`--no-demo-tx` bootstrape sans transactions ; `--no-gov-demo` saute le vote d'un validateur. `Ctrl-C` arrête tout.
 
 ### 5.4 Lancer un nœud manuellement
 
-Chaque nœud possède son propre dossier de données et un port ; les rôles des pairs sont découverts au runtime (handshake `/status` + challenge `/role_challenge`).
+Chaque nœud possède son propre dossier de données, un port et **son** wallet ; il ne partage aucun fichier de protocole. L'**archive** crée le genesis depuis un spec ; les autres nœuds le **synchronisent** via un seul `--bootstrap` (s'il pointe l'archive → sync direct ; sinon le pair renvoie l'adresse de **son** archive — referral).
 
 ```bash
+# 1) archive (sans wallet) : construit le genesis et sert la sync
+python -m blockchain_demo.node \
+  --config config.demo.json --local-role archive --port 9000 \
+  --data-dir runtime/archive --genesis-spec runtime/genesis_spec.json
+
+# 2) un nœud (mineur/validateur/…) : wallet + UN bootstrap, puis sync + mesh
 python -m blockchain_demo.node \
   --config config.demo.json --local-role miner \
   --wallet runtime/wallets/miner.json --port 9001 \
-  --data-dir runtime/miner \
-  --peers runtime/peers.json --validators runtime/validators.json
+  --data-dir runtime/miner --bootstrap 127.0.0.1:9000
 ```
 
-`--local-role` ∈ `{miner, validator, both, full}`. L'explorer se lance de même :
+`--local-role` ∈ `{miner, validator, both, full, archive}`. L'explorer dérive tout de la chaîne :
 
 ```bash
 python -m blockchain_demo.explorer \
-  --data-dir runtime/miner \
-  --validators runtime/validators.json --peers runtime/peers.json --port 8600
+  --data-dir runtime/archive --node-url http://127.0.0.1:9000 --port 8600
 ```
 
 ### 5.5 Envoyer une transaction

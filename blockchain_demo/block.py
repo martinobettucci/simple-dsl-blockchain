@@ -97,6 +97,7 @@ class Block:
     validator_signatures: Dict[str, str] = field(default_factory=dict)
     finalized: bool = False
     signers_frozen: List[str] = field(default_factory=list)
+    governance: Dict = field(default_factory=dict)  # derived snapshot, excluded from the hash
 
     def canonical_dict(self) -> Dict:
         return {
@@ -118,7 +119,8 @@ class Block:
                          parent_balances: Dict[str, int], cfg) -> "Block":
         state = dict(parent_state)
         for tx in txs:
-            state = dsl.execute(tx.script, state)
+            if tx.type == "dsl":  # governance txs do not mutate state
+                state = dsl.execute(tx.script, state)
         # Provisional balances for display only (excluded from the hash, and
         # recomputed at finalize once signers_frozen is known).
         balances = dict(parent_balances)
@@ -148,6 +150,7 @@ class Block:
             "validator_signatures": self.validator_signatures,
             "finalized": self.finalized,
             "signers_frozen": self.signers_frozen,
+            "governance": self.governance,
         })
         return data
 
@@ -161,6 +164,7 @@ class Block:
             validator_signatures=dict(data.get("validator_signatures", {})),
             finalized=bool(data.get("finalized", False)),
             signers_frozen=list(data.get("signers_frozen", [])),
+            governance=dict(data.get("governance", {})),
         )
 
     def add_validator_signature(self, pubkey: str, signature: str, validator_set: List[str]) -> bool:

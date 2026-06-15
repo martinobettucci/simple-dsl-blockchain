@@ -26,12 +26,7 @@ def seeded(cfg_fast, tmp_data_dir, genesis_block, make_wallet, validators):
     store.save_block(blk)
     store.save_state(blk.state)
     store.save_balances(blk.balances)
-    vfile = os.path.join(tmp_data_dir, "validators.json")
-    with open(vfile, "w") as f:
-        json.dump({"validators": [{"pubkey": v["public_key"], "name": f"V{i}"}
-                                  for i, v in enumerate(validators)],
-                   "quorum_percent": 51}, f)
-    app = create_app(validators_file=vfile, peers_file=None, **paths)
+    app = create_app(**paths)
     return app.test_client(), blk, miner, vset
 
 

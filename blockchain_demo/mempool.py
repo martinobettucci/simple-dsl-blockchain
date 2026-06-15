@@ -16,6 +16,30 @@ from . import dsl
 from . import config
 from .transaction import Transaction
 
+# Governance transaction types and their required ``data`` schema (validated here
+# as a soft gate; authoritative resolution happens in ``governance.apply_block``).
+_GOV_SCHEMA = {
+    "validator_apply": (),
+    "validator_vote": ("candidate",),
+    "config_propose": ("changes",),
+    "config_vote": ("pid",),
+}
+
+
+def _valid_governance_data(tx: Transaction) -> bool:
+    if tx.type not in _GOV_SCHEMA:
+        return False
+    for key in _GOV_SCHEMA[tx.type]:
+        if key not in tx.data:
+            return False
+    if tx.type == "validator_vote" and not isinstance(tx.data.get("candidate"), str):
+        return False
+    if tx.type == "config_propose" and not isinstance(tx.data.get("changes"), dict):
+        return False
+    if tx.type == "config_vote" and not isinstance(tx.data.get("pid"), str):
+        return False
+    return True
+
 
 class Mempool:
     def __init__(self, balances: Optional[Dict[str, int]] = None, mode: Optional[str] = None):
@@ -43,9 +67,12 @@ class Mempool:
         reserved = self.reserved.get(tx.from_addr, 0)
         if self.balances.get(tx.from_addr, 0) < reserved + tx.premium:
             return False
-        try:
-            dsl.parse_script(tx.script)
-        except Exception:
+        if tx.type == "dsl":
+            try:
+                dsl.parse_script(tx.script)
+            except Exception:
+                return False
+        elif not _valid_governance_data(tx):
             return False
         tx_hash = tx.hash()
         if tx_hash in self.tx_hashes:

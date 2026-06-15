@@ -66,6 +66,65 @@ def load_peers(path: str, self_port: Optional[int] = None) -> List[PeerInfo]:
     return peers
 
 
+def parse_endpoint(addr: str) -> PeerInfo:
+    """Parse a ``host:port`` (or full URL) string into a :class:`PeerInfo`."""
+    cleaned = addr.replace("http://", "").replace("https://", "").strip("/")
+    host, port = cleaned.rsplit(":", 1)
+    return PeerInfo(host, int(port))
+
+
+def base_url(addr: str) -> str:
+    if addr.startswith("http"):
+        return addr.rstrip("/")
+    return "http://" + addr.rstrip("/")
+
+
+def fetch_status(addr: str, timeout: float = 2.0) -> Dict:
+    return requests.get(base_url(addr) + "/status", timeout=timeout).json()
+
+
+def fetch_genesis(addr: str, timeout: float = 4.0) -> Optional[Dict]:
+    r = requests.get(base_url(addr) + "/genesis", timeout=timeout)
+    if r.status_code != 200:
+        return None
+    return r.json().get("block")
+
+
+def fetch_blocks_since(addr: str, since: int, limit: int = 200, timeout: float = 8.0) -> List[Dict]:
+    r = requests.get(base_url(addr) + "/blocks",
+                     params={"since": since, "limit": limit}, timeout=timeout)
+    return r.json().get("blocks", [])
+
+
+def fetch_peers(addr: str, timeout: float = 2.0) -> List[Dict]:
+    r = requests.get(base_url(addr) + "/peers", timeout=timeout)
+    return r.json().get("peers", [])
+
+
+def announce(addr: str, host: str, port: int, timeout: float = 2.0) -> bool:
+    """Announce our endpoint to a peer so the mesh can learn about us."""
+    try:
+        requests.post(base_url(addr) + "/announce", json={"host": host, "port": port}, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def merge_peers(local: List[PeerInfo], remote: List[Dict],
+                self_port: Optional[int] = None, cap: int = 50) -> List[PeerInfo]:
+    """Union ``local`` with the ``remote`` peer dicts, excluding self, capped."""
+    by_key = {(p.host, p.port): p for p in local}
+    for rp in remote:
+        try:
+            host, port = rp["host"], int(rp["port"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if self_port is not None and port == int(self_port):
+            continue  # localhost demo: identify self by port
+        by_key.setdefault((host, port), PeerInfo(host, port))
+    return list(by_key.values())[:cap]
+
+
 def probe_peer(peer: PeerInfo, validator_set: List[str]) -> bool:
     """Handshake + challenge-signature (§7.2/§7.3).
 
@@ -120,10 +179,12 @@ def broadcast_tx(peers: List[PeerInfo], tx_json: Dict) -> int:
 
 
 def broadcast_block_proposal(peers: List[PeerInfo], block_json: Dict) -> int:
-    targets = [p for p in peers if p.is_validator]
-    if not targets:  # fallback to all peers if no authenticated validators (§7.5)
-        targets = peers
-    return _broadcast(targets, "/block_proposal", block_json)
+    # Send to every peer: each node self-filters (only validators in the parent
+    # governance snapshot sign).  Broadcasting to all — rather than only to
+    # already-discovered validators — ensures a validator that the miner has not
+    # probed yet still receives the proposal, so it can sign and earn its share
+    # instead of unfairly accruing missed-quorum counts while the mesh forms.
+    return _broadcast(peers, "/block_proposal", block_json)
 
 
 def broadcast_block_signature(peers: List[PeerInfo], payload: Dict) -> int:
@@ -274,21 +335,30 @@ class ChainStore:
 
     @staticmethod
     def verify_chain(chain: List[Block], cfg) -> bool:
-        """Structural integrity: rooted at genesis, prev-hash links, PoW, DSL replay."""
+        """Structural integrity: rooted at genesis, prev-hash links, PoW, DSL
+        replay, and (when present) governance snapshot consistency."""
         if not chain:
             return True
         if not chain[0].is_genesis():
             return False
+        from .governance import genesis_state, apply_block
+        from .config import effective_config
         state = dict(chain[0].state)
+        gov = genesis_state(chain[0])
         prev = chain[0]
         for b in chain[1:]:
             if b.header.prev_hash != block_id(prev):
                 return False
-            if not b.has_valid_pow(cfg.DIFFICULTY_BITS):
+            eff = effective_config(cfg, gov.config)
+            if not b.has_valid_pow(eff.DIFFICULTY_BITS):
                 return False
             for tx in b.transactions:
-                state = dsl.execute(tx.script, state)
+                if tx.type == "dsl":  # governance txs do not mutate state
+                    state = dsl.execute(tx.script, state)
             if state != b.state:
+                return False
+            gov = apply_block(gov, b, height=b.header.height)
+            if b.governance and gov.to_snapshot() != b.governance:
                 return False
             prev = b
         return True
