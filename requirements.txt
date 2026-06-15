@@ -2,3 +2,4 @@ ecdsa
 requests
 Flask
 pytest
+playwright  # demo-video proofs (CLAUDE.md); run: python -m playwright install chromium
