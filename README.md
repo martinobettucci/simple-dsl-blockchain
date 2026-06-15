@@ -25,6 +25,8 @@ Construisez, minez, signez et visualisez une mini‑blockchain en Python :
 * Rôles réseau (mineur/validateur/both/full) **découverts dynamiquement à runtime via challenge‑signature** — aucun rôle n’est stocké dans `peers.json`.
 * Gestion explicite des forks (stockage fichier par bloc, règle *longest‑finalized‑chain wins*).
 * Explorer Web intégré pour visualiser transactions, blocs, forks, signatures & incitations.
+* Monitoring par nœud (`/monitor`) : mempool, logs, stats de run, graphe de forks et topologie navigable.
+* Wallet web + nœud RPC : la wallet prend une clé privée, affiche pubkey/solde et envoie des statements ; un nœud passif `rpc` (synchronisé, non-validateur) sert les lectures et relaie les tx signées (modèle `sendRawTransaction`).
 
 ---
 
@@ -181,7 +183,7 @@ python -m blockchain_demo.node \
   --data-dir runtime/miner --bootstrap 127.0.0.1:9000
 ```
 
-`--local-role` ∈ `{miner, validator, both, full, archive}`. L'explorer dérive tout de la chaîne :
+`--local-role` ∈ `{miner, validator, both, full, archive, rpc}`. L'explorer dérive tout de la chaîne :
 
 ```bash
 python -m blockchain_demo.explorer \
@@ -447,6 +449,27 @@ expose, en JSON et via une UI :
 La **topologie** est navigable : un clic sur un pair ouvre **son** `/monitor` (on parcourt le mesh,
 chaque nœud montrant sa propre vue). Le **graphe de chaîne** met en évidence la chaîne canonique et
 fait apparaître branches/forks et candidats *pending* ; un clic sur un bloc affiche son détail.
+
+---
+
+## 12bis. Wallet web & nœud RPC
+
+Comme dans une blockchain réelle, un **RPC** est l'API d'un nœud **synchronisé** qui sert les lectures
+et **relaie les transactions signées** — il ne signe jamais pour l'utilisateur. Deux briques :
+
+* **Nœud `rpc`** (rôle passif, sans wallet) : `python -m blockchain_demo.node --local-role rpc
+  --port 9006 --data-dir runtime/rpc --bootstrap 127.0.0.1:9000`. Il synchronise la chaîne, ne
+  mine/valide/signe pas, expose les lectures et propage les tx au mesh. Tous les nœuds exposent aussi
+  `GET /account/<pubkey>` → `{balance, nonce, next_nonce}` (≈ `eth_getBalance` + `eth_getTransactionCount`).
+* **Wallet web** : `python -m blockchain_demo.wallet_app --rpc http://127.0.0.1:9006 --port 8700`,
+  puis ouvrir **http://127.0.0.1:8700**. La wallet prend une **clé privée**, affiche la **clé
+  publique** et le **solde**, et envoie des **statements DSL** (ex. `let counter = counter + 1`).
+
+Flux d'envoi (≈ `eth_sendRawTransaction`) : la wallet récupère `next_nonce` via `/account`, **signe**
+la transaction (avec `wallet.py`) puis la relaie au nœud RPC (`POST /tx`), qui la propage au mineur.
+
+> ⚠️ Démo pédagogique : la signature se fait **côté serveur wallet** (local), donc la clé privée est
+> transmise à ce serveur local. Un vrai wallet signe sur l'appareil et ne transmet jamais la clé.
 
 ---
 

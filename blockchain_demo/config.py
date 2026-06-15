@@ -33,7 +33,7 @@ class Config:
     VALIDATORS_FILE: str = "validators.json"
     PEERS_FILE: str = "peers.json"
     API_PORT: int = 8545
-    LOCAL_ROLE: str = "miner"               # miner / validator / both / full / archive
+    LOCAL_ROLE: str = "miner"               # miner / validator / both / full / archive / rpc
     BLOCK_CANDIDATE_TTL: int = 120
     SIGNATURE_GRACE: float = 0.0            # secs the proposer waits to gather all signatures
     PREMIUM_REFUND_ON_FAIL: bool = True

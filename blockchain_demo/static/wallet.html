@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DSL Wallet</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/monitor.css" />
+</head>
+<body>
+  <header>
+    <h1>👛 DSL Wallet</h1>
+    <span class="spacer"></span>
+    <span id="conn" class="live down">● locked</span>
+  </header>
+
+  <main>
+    <section>
+      <h2>Connect</h2>
+      <label>RPC node <input id="rpc" type="text" placeholder="http://127.0.0.1:9006" /></label>
+      <label>Private key (hex) <input id="pk" type="password" placeholder="64-hex private key" /></label>
+      <button id="unlock">Unlock</button>
+      <button id="lock" disabled>Lock</button>
+      <p class="warn-note">⚠️ Pedagogical demo: the private key is sent to this <b>local</b> wallet
+        server for signing (it reuses the node's crypto). A real wallet signs on-device and never
+        transmits the key.</p>
+    </section>
+
+    <section>
+      <h2>Account</h2>
+      <div class="kv"><span>public key</span><span id="pub" class="hash mono">—</span></div>
+      <div class="kv"><span>balance</span><span id="bal" class="big">—</span></div>
+      <div class="kv"><span>next nonce</span><span id="nonce">—</span></div>
+      <div class="kv"><span>RPC height</span><span id="height">—</span></div>
+    </section>
+
+    <section>
+      <h2>Send a statement <small>(DSL — mutates the global state)</small></h2>
+      <label>Statement
+        <input id="script" type="text" value="let counter = counter + 1" />
+      </label>
+      <label>Premium <input id="premium" type="number" value="1" min="0" /></label>
+      <button id="send" disabled>Sign &amp; send</button>
+      <pre id="result">—</pre>
+    </section>
+  </main>
+
+  <footer>signs server-side via wallet.py · relays to the RPC node's /tx · pedagogical demo</footer>
+  <script src="/static/wallet.js"></script>
+</body>
+</html>

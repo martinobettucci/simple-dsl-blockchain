@@ -257,6 +257,18 @@ class ChainState:
                 "miss_counts": {}, "last_signed_height": {},
             }
 
+    def account_summary(self, pubkey: str) -> Dict:
+        """Balance + nonce for an address (the wallet's RPC read).
+
+        ``next_nonce`` already accounts for both confirmed and pooled txs, since
+        the mempool's per-address nonce floor is bumped to the on-chain maximum
+        on every canonical recompute."""
+        with self.lock:
+            nonce = int(self.mempool.nonces.get(pubkey, 0))
+            return {"pubkey": pubkey, "balance": int(self.active_balances.get(pubkey, 0)),
+                    "nonce": nonce, "next_nonce": nonce + 1,
+                    "height": self.chain[-1].header.height if self.chain else 0}
+
     # --- monitoring (per-node observability) --- #
     def mempool_summary(self) -> Dict:
         with self.lock:
@@ -757,6 +769,10 @@ def create_app(state: ChainState) -> Flask:
     def governance():
         return jsonify(state.governance_summary())
 
+    @app.get("/account/<pubkey>")
+    def account(pubkey):
+        return jsonify(state.account_summary(pubkey))
+
     # --- monitoring UI + data (per-node observability) --- #
     @app.get("/monitor")
     def monitor():
@@ -844,9 +860,9 @@ def build_state_from_args(args) -> ChainState:
     store = ChainStore(cfg.BLOCKS_DIR, cfg.PENDING_DIR, cfg.STATE_FILE, cfg.BAL_FILE)
 
     wallet = None
-    if role != "archive":
+    if role not in ("archive", "rpc"):     # archive + rpc are passive (no wallet)
         if not args.wallet:
-            raise SystemExit("--wallet is required for non-archive nodes")
+            raise SystemExit("--wallet is required for this role")
         wallet = wallet_mod.load_wallet(args.wallet)
 
     if role == "archive" and GENESIS_HASH not in store.load_all_blocks():
@@ -870,7 +886,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pedagogical blockchain node")
     parser.add_argument("--config", required=True)
     parser.add_argument("--local-role",
-                        choices=["miner", "validator", "both", "full", "archive"], required=True)
+                        choices=["miner", "validator", "both", "full", "archive", "rpc"], required=True)
     parser.add_argument("--wallet", help="wallet file (required unless role=archive)")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--data-dir", required=True)

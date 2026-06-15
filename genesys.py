@@ -40,6 +40,8 @@ WALLET_DIR = os.path.join(RUNTIME, "wallets")
 
 ARCHIVE_PORT = 9000
 EXPLORER_PORT = 8600
+RPC_PORT = 9006        # passive RPC node the wallet talks to
+WALLET_PORT = 8700     # web wallet app
 # (name, role, port) for the initial validator-bearing nodes
 NODES = [
     ("miner", "miner", 9001),
@@ -159,6 +161,10 @@ def main():
     for name, role, port in NODES:
         procs.append(launch_node(args, name, role, port, bootstrap=archive_url))
 
+    # 4b) a passive RPC node (no wallet): syncs, serves reads, relays signed txs
+    rpc_url = f"http://127.0.0.1:{RPC_PORT}"
+    procs.append(launch_node(args, "rpc", "rpc", RPC_PORT, bootstrap=archive_url, wallet=False))
+
     # 5) explorer derives everything from the archive's copy of the chain
     procs.append(subprocess.Popen(
         [sys.executable, "-m", "blockchain_demo.explorer",
@@ -166,13 +172,25 @@ def main():
          "--node-url", archive_url, "--port", str(EXPLORER_PORT)],
         cwd=ROOT, start_new_session=True))
 
+    # 5b) web wallet (server-side signing) pointed at the RPC node
+    wait_for(rpc_url + "/status")
+    procs.append(subprocess.Popen(
+        [sys.executable, "-m", "blockchain_demo.wallet_app",
+         "--rpc", rpc_url, "--port", str(WALLET_PORT)],
+        cwd=ROOT, start_new_session=True))
+
     ready = all(wait_for(f"http://127.0.0.1:{port}/status") for _, _, port in NODES)
     print("\n=== Demo blockchain running (mesh) ===")
     print(f"  Explorer : http://127.0.0.1:{EXPLORER_PORT}   (Network nodes · /governance)")
+    print(f"  Wallet   : http://127.0.0.1:{WALLET_PORT}   (web wallet -> RPC {rpc_url})")
     print(f"  Archive  : {archive_url}/monitor   (no wallet, creates genesis, sync source)")
+    print(f"  RPC node : {rpc_url}/monitor   (passive: sync + serve reads + relay tx)")
     for name, role, port in NODES:
         print(f"  {name:11s} role={role:9s} http://127.0.0.1:{port}/monitor  --bootstrap {archive_url}")
     print("  (each node exposes /monitor: mempool, logs, run stats, fork graph, topology)")
+    print("\n  Paste this demo user key into the Wallet app (balance 1000):")
+    print(f"    private key: {user_w['private_key']}")
+    print(f"    public key : {user_w['public_key']}")
     print(f"  quorum={cfg.QUORUM_PERCENT}%  difficulty={cfg.DIFFICULTY_BITS} bits  "
           f"offline_N={cfg.LIVENESS_OFFLINE_N}  miss_X={cfg.LIVENESS_MISS_X}  floor={cfg.VALIDATOR_FLOOR}")
     if not ready:

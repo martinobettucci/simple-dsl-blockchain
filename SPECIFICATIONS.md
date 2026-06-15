@@ -780,6 +780,29 @@ config partagée figée (→ config gouvernable embarquée au genesis + tx `conf
 
 ---
 
+## 24. Wallet web & nœud RPC (v6)
+
+Reproduit le modèle réel (Ethereum JSON-RPC) : un **RPC** est l'API d'un nœud synchronisé qui sert les
+lectures et **relaie les transactions signées** ; il ne détient ni n'utilise jamais la clé de l'usager.
+
+* **Rôle `rpc`** : nœud passif sans wallet (ni mine, ni signature, ni vote). Il synchronise la chaîne
+  via `--bootstrap`, propage les tx reçues sur `/tx` au mesh, et sert les lectures. C'est l'équivalent
+  d'un *RPC provider* non-validateur. `supports_mining = supports_validation = False`, `pubkey = None`.
+* **Lecture par compte** : tous les nœuds exposent `GET /account/<pubkey>` →
+  `{balance, nonce, next_nonce, height}` (≈ `eth_getBalance` + `eth_getTransactionCount`). `next_nonce`
+  intègre le plancher de nonce du mempool (max on-chain + en attente).
+* **Wallet** (`wallet_app.py`, Flask) : prend une **clé privée**, dérive la **clé publique**
+  (`wallet.public_key_of`), lit le **solde** via `/account`, et envoie des **statements DSL**. Le flux
+  d'envoi (≈ `eth_sendRawTransaction`) : récupère `next_nonce`, construit + **signe** la transaction
+  (`wallet.sign`, donc compatibilité crypto garantie), puis relaie `POST /tx` au nœud RPC.
+* **Périmètre** : statements DSL uniquement (mutations de `state`), avec premium ; les transactions de
+  gouvernance ne sont pas exposées par la wallet.
+* **Caveat de sécurité** : la signature est effectuée **côté serveur wallet** (local), donc la clé
+  privée transite vers ce serveur — choix pédagogique, pas un modèle de wallet matériel. Un vrai wallet
+  signerait côté client sans jamais transmettre la clé.
+
+---
+
 ### Fin du document (v6)
 
 Pour toute évolution, incrémenter version et documenter les changements.

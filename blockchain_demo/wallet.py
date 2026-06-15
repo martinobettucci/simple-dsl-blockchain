@@ -59,6 +59,12 @@ def sign(wallet: Dict, message: str) -> str:
     return sk.sign_deterministic(message.encode(), hashfunc=_HASH).hex()
 
 
+def public_key_of(private_key: str) -> str:
+    """Derive the SECP256k1 public key (raw X||Y hex, used as the address)."""
+    sk = SigningKey.from_string(bytes.fromhex(private_key), curve=SECP256k1)
+    return sk.verifying_key.to_string().hex()
+
+
 def verify(pubkey: str, message: str, signature: str) -> bool:
     """Verify ``signature`` of ``message`` against ``pubkey`` (all hex)."""
     if not signature:

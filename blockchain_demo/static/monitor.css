@@ -42,3 +42,17 @@ svg .bsub { fill: var(--muted); font-size: 10px; text-anchor: middle; }
 .detail { background: #10142a; border: 1px solid #2a3050; border-radius: 8px; padding: 10px 12px;
           margin-top: 10px; white-space: pre-wrap; word-break: break-all; font-size: 12px; color: var(--ink); }
 #logs { max-height: 320px; overflow-y: auto; font-size: 12px; }
+
+/* wallet forms */
+label { display: block; margin: 8px 0; color: var(--muted); }
+input[type=text], input[type=password], input[type=number] {
+  width: 100%; margin-top: 4px; padding: 7px 9px; background: #10142a; color: var(--ink);
+  border: 1px solid #2a3050; border-radius: 6px; font: inherit; }
+button { background: #243a55; color: var(--ink); border: 1px solid var(--accent); border-radius: 6px;
+  padding: 7px 14px; font: inherit; cursor: pointer; margin: 4px 8px 4px 0; }
+button:disabled { opacity: .45; cursor: not-allowed; border-color: #41496f; }
+.kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #262c45; }
+.kv span:first-child { color: var(--muted); }
+.big { color: var(--accent); font-size: 20px; font-weight: bold; }
+.warn-note { color: var(--warn); font-size: 12px; margin-top: 10px; }
+
