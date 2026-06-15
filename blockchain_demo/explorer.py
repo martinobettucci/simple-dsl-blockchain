@@ -158,6 +158,35 @@ def create_app(blocks_dir: str, pending_dir: str, state_file: str, bal_file: str
         except Exception:
             return jsonify({"peers": []})
 
+    @app.get("/nodes")
+    def nodes():
+        """Directory of discovered nodes (linked node + its mesh peers), probed
+        server-side so the UI can deep-link to each node's own /monitor page."""
+        if not node_url:
+            return jsonify({"nodes": []})
+        seen: Dict[str, dict] = {}
+
+        def probe(url: str):
+            try:
+                st = network.fetch_status(url)
+            except Exception:
+                return
+            ep = network.parse_endpoint(network.base_url(url))
+            seen[f"{ep.host}:{ep.port}"] = {
+                "url": network.base_url(url), "host": ep.host, "port": ep.port,
+                "role": st.get("role"), "is_archive": st.get("is_archive"),
+                "height": st.get("height"), "pubkey": st.get("pubkey"),
+                "monitor": f"{network.base_url(url)}/monitor",
+            }
+
+        probe(node_url)
+        try:
+            for p in network.fetch_peers(node_url):
+                probe(f"http://{p['host']}:{p['port']}")
+        except Exception:
+            pass
+        return jsonify({"nodes": sorted(seen.values(), key=lambda n: n["port"])})
+
     return app
 
 

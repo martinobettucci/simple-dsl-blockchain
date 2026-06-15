@@ -17,14 +17,16 @@ referral), sync the chain, and then discover the rest of the mesh by gossip.
 """
 
 import argparse
+import collections
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from typing import Dict, List, Optional
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 
 from .config import load_config, apply_data_dir, effective_config
 from . import wallet as wallet_mod
@@ -37,6 +39,39 @@ from .block import Block, BlockHeader, block_id, distribute_rewards, GENESIS_HAS
 from .governance import GovernanceState, apply_block, quorum_at, genesis_state
 
 log = logging.getLogger("node")
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+
+class _RingLogHandler(logging.Handler):
+    """Keep the most recent log records in memory so a node can serve them over
+    HTTP (the monitoring UI) without touching the filesystem."""
+
+    def __init__(self, capacity: int = 800):
+        super().__init__()
+        self.records = collections.deque(maxlen=capacity)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.records.append({"t": record.created, "level": record.levelname,
+                                 "name": record.name, "msg": record.getMessage()})
+        except Exception:
+            pass
+
+
+_LOG_RING = _RingLogHandler()
+
+
+def _install_log_capture() -> None:
+    """Capture the node's own consensus/sync logs in the ring buffer (once).
+
+    Only the ``node`` logger is captured so ``/logs`` shows the consensus
+    narrative (PROPOSED / FINALIZED / ACCEPTED / sync) rather than being flooded
+    by werkzeug HTTP access lines from the monitor's own polling."""
+    nlog = logging.getLogger("node")
+    if _LOG_RING not in nlog.handlers:
+        nlog.addHandler(_LOG_RING)
+        nlog.setLevel(logging.INFO)
 
 
 def build_genesis_from_spec(spec: Dict) -> Block:
@@ -81,6 +116,9 @@ class ChainState:
         self.active_balances: Dict[str, int] = {}
         self._gov_cache: Dict[str, GovernanceState] = {}
         self.mempool = Mempool(balances={}, mode=cfg.TX_QUEUE_MODE)
+        self.started_at = time.time()
+        self.stats = {"proposed": 0, "finalized": 0, "accepted": 0, "synced": 0,
+                      "tx_accepted": 0, "tx_rejected": 0, "tx_duplicate": 0, "sigs": 0}
         self._bootstrap()
 
     # --- role helpers --- #
@@ -219,13 +257,67 @@ class ChainState:
                 "miss_counts": {}, "last_signed_height": {},
             }
 
+    # --- monitoring (per-node observability) --- #
+    def mempool_summary(self) -> Dict:
+        with self.lock:
+            out = [{"order": seq, "from": tx.from_addr, "type": tx.type,
+                    "premium": tx.premium, "nonce": tx.nonce, "hash": tx.hash(),
+                    "script": tx.script if tx.type == "dsl" else "",
+                    "data": tx.data if tx.type != "dsl" else {}}
+                   for seq, tx in self.mempool.txs]
+        return {"mempool": out, "size": len(out), "mode": self.mempool.mode}
+
+    def stats_summary(self) -> Dict:
+        with self.lock:
+            gp = self._current_gov_locked()
+            return {
+                "pubkey": self.pubkey, "role": self.local_role, "port": self.port,
+                "is_archive": self.is_archive, "archive_addr": self.archive_addr,
+                "uptime_s": round(time.time() - self.started_at, 1),
+                "height": self.chain[-1].header.height if self.chain else 0,
+                "tip": self.tip_hash, "blocks_known": len(self.blocks),
+                "pending": len(self.pending), "mempool": len(self.mempool),
+                "peers": len(self.peers),
+                "validators": len(gp.validators) if gp else 0,
+                "quorum": quorum_at(gp) if gp else 0,
+                "is_validator": self._is_validator_in(gp),
+                "counters": dict(self.stats),
+            }
+
+    def logs_tail(self, limit: int) -> Dict:
+        return {"logs": list(_LOG_RING.records)[-limit:]}
+
+    def chain_graph(self) -> Dict:
+        """Block DAG (all known blocks + pending) for the fork-graph view: the
+        canonical chain is flagged so the UI can highlight it and branch forks."""
+        with self.lock:
+            canonical = {block_id(b) for b in self.chain}
+            blocks = [{"hash": bid, "prev": b.header.prev_hash, "height": b.header.height,
+                       "miner": b.header.miner, "finalized": b.finalized,
+                       "txs": len(b.transactions), "signers": len(b.signers_frozen),
+                       "canonical": bid in canonical, "genesis": b.is_genesis()}
+                      for bid, b in self.blocks.items()]
+            pending = [{"hash": bid, "prev": b.header.prev_hash, "height": b.header.height,
+                        "miner": b.header.miner, "txs": len(b.transactions),
+                        "signatures": len(b.validator_signatures)}
+                       for bid, b in self.pending.items() if bid not in self.blocks]
+            return {"blocks": blocks, "pending": pending, "tip": self.tip_hash,
+                    "height": self.chain[-1].header.height if self.chain else 0}
+
+    def block_detail(self, bhash: str) -> Optional[Dict]:
+        with self.lock:
+            b = self.blocks.get(bhash) or self.pending.get(bhash)
+            return {"block": b.to_json()} if b else None
+
     def submit_tx(self, tx_json: Dict) -> Dict:
         tx = Transaction.from_json(tx_json)
         tx_hash = tx.hash()
         with self.lock:
             if tx_hash in self.mempool.tx_hashes:
+                self.stats["tx_duplicate"] += 1
                 return {"status": "duplicate", "tx_hash": tx_hash}
             accepted = self.mempool.add_tx(tx)
+            self.stats["tx_accepted" if accepted else "tx_rejected"] += 1
         if accepted:
             self._safe_broadcast(network.broadcast_tx, tx.to_json())
             return {"status": "accepted", "tx_hash": tx_hash}
@@ -250,6 +342,7 @@ class ChainState:
                 sig = wallet_mod.sign(self.wallet, block.hash())
                 if block.add_validator_signature(self.pubkey, sig, gp.validators):
                     self.store.save_pending(block)
+                    self.stats["sigs"] += 1
                     sig_payload = {"block_hash": block.hash(), "val_pub": self.pubkey, "sig": sig}
             if self._should_finalize_locked(block, gp):
                 finalized = self._try_finalize_locked(block)
@@ -299,6 +392,7 @@ class ChainState:
             self.pending_created_at.pop(bid, None)
             self.store.delete_pending(bid)
             self._recompute_canonical_locked()
+            self.stats["accepted"] += 1
             log.info("ACCEPTED finalized height=%s hash=%s", block.header.height, bid[:12])
         self._safe_broadcast(network.broadcast_block_finalized, block.to_json())
         return {"status": "ok"}
@@ -448,6 +542,7 @@ class ChainState:
         self.pending_created_at.pop(bid, None)
         self.store.delete_pending(bid)
         self._recompute_canonical_locked()
+        self.stats["finalized"] += 1
         log.info("FINALIZED height=%s hash=%s signers=%s",
                  block.header.height, bid[:12], [s[:8] for s in block.signers_frozen])
         return block
@@ -511,9 +606,11 @@ class ChainState:
             if self._is_validator_in(gp):
                 sig = wallet_mod.sign(self.wallet, candidate.hash())
                 if candidate.add_validator_signature(self.pubkey, sig, gp.validators):
+                    self.stats["sigs"] += 1
                     sig_payload = {"block_hash": candidate.hash(), "val_pub": self.pubkey, "sig": sig}
                     if self._should_finalize_locked(candidate, gp):
                         finalized = self._try_finalize_locked(candidate)
+            self.stats["proposed"] += 1
             log.info("PROPOSED height=%s hash=%s txs=%s premiums=%s",
                      candidate.header.height, bid[:12], len(txs), [t.premium for t in txs])
         self._safe_broadcast(network.broadcast_block_proposal, candidate.to_json())
@@ -623,7 +720,8 @@ class ChainState:
 
 
 def create_app(state: ChainState) -> Flask:
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
+    _install_log_capture()
 
     def _body() -> Dict:
         return request.get_json(force=True, silent=True) or {}
@@ -658,6 +756,32 @@ def create_app(state: ChainState) -> Flask:
     @app.get("/governance")
     def governance():
         return jsonify(state.governance_summary())
+
+    # --- monitoring UI + data (per-node observability) --- #
+    @app.get("/monitor")
+    def monitor():
+        return send_from_directory(STATIC_DIR, "monitor.html")
+
+    @app.get("/mempool")
+    def mempool():
+        return jsonify(state.mempool_summary())
+
+    @app.get("/stats")
+    def stats():
+        return jsonify(state.stats_summary())
+
+    @app.get("/logs")
+    def logs():
+        return jsonify(state.logs_tail(int(request.args.get("limit", 200))))
+
+    @app.get("/graph")
+    def graph():
+        return jsonify(state.chain_graph())
+
+    @app.get("/block/<bhash>")
+    def block(bhash):
+        detail = state.block_detail(bhash)
+        return (jsonify(detail), 200) if detail else (jsonify({"error": "not found"}), 404)
 
     @app.post("/tx")
     def tx():

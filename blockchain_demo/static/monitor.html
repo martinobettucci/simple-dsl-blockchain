@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Node Monitor</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/monitor.css" />
+</head>
+<body>
+  <header>
+    <h1>🛰️ Node Monitor</h1>
+    <span id="ident">…</span>
+    <span class="spacer"></span>
+    <span id="live" class="live">● live</span>
+  </header>
+
+  <main>
+    <section id="statsbox">
+      <h2>Run stats</h2>
+      <div id="stats" class="stats-grid">…</div>
+    </section>
+
+    <section>
+      <h2>Known network topology <small>(this node + its peers · click a peer to open its monitor)</small></h2>
+      <div id="topo-wrap"><svg id="topo" width="100%" height="340"></svg></div>
+      <p id="topo-empty" class="hash"></p>
+    </section>
+
+    <section>
+      <h2>Chain copy — fork graph <small>(canonical highlighted · click a block for details)</small></h2>
+      <div id="graph-wrap"><svg id="graph" height="360"></svg></div>
+      <div id="blockdetail" class="detail">select a block…</div>
+    </section>
+
+    <section>
+      <h2>Mempool <small>(ordering: <span id="mempool-mode">—</span>)</small></h2>
+      <table id="mempool">
+        <thead><tr><th>#</th><th>from</th><th>type</th><th>premium</th><th>nonce</th><th>payload</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Logs <small>(most recent)</small></h2>
+      <pre id="logs">…</pre>
+    </section>
+  </main>
+
+  <footer><a href="javascript:history.back()">← back</a> · auto-refresh every 2s · pedagogical demo</footer>
+  <script src="/static/monitor.js"></script>
+</body>
+</html>

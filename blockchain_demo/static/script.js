@@ -14,10 +14,29 @@ function el(tag, html) {
 
 async function refresh() {
   try {
-    const [chain, balances, validators, pending, branches, state, governance] = await Promise.all([
+    const [chain, balances, validators, pending, branches, state, governance, nodes] = await Promise.all([
       get("/chain"), get("/balances"), get("/validators"),
       get("/pending"), get("/branches"), get("/state"), get("/governance"),
+      get("/nodes").catch(() => ({ nodes: [] })),
     ]);
+
+    const nbody = document.querySelector("#nodes tbody");
+    nbody.innerHTML = "";
+    (nodes.nodes || []).forEach((n) => {
+      const tr = el("tr");
+      const role = n.is_archive ? "archive" : (n.role || "—");
+      tr.append(
+        el("td", `<span class="mono">${n.host}:${n.port}</span>`),
+        el("td", role),
+        el("td", String(n.height ?? "—")),
+        el("td", `<span class="hash">${n.pubkey ? short(n.pubkey) : "—"}</span>`),
+        el("td", `<a href="${n.monitor}" target="_blank">⛭ monitor</a>`)
+      );
+      nbody.append(tr);
+    });
+    if (!(nodes.nodes || []).length) {
+      nbody.append(el("tr", `<td colspan="5" class="hash">no nodes discovered</td>`));
+    }
 
     document.getElementById("tip").textContent = "height: " + chain.height;
     document.getElementById("state").textContent = JSON.stringify(state.state, null, 2);

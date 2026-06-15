@@ -426,6 +426,27 @@ L’outil `explorer.py` expose une API REST + UI statique minimaliste.
 | GET     | `/validators`       | Registre validateurs + stats signatures/quorum                  |
 | GET     | `/diff/<hash>`      | Delta state/balances vs parent                                  |
 | GET     | `/peers`            | Peers détectés + statut preuve                                  |
+| GET     | `/governance`       | Set/config dérivés + candidatures/propositions                  |
+| GET     | `/nodes`            | Annuaire des nœuds du mesh découverts (+ lien `/monitor`)       |
+
+### Monitoring par nœud (`/monitor`)
+
+Chaque **nœud** sert sa propre page de supervision sur son port : `http://<hôte>:<port>/monitor`.
+Elle est accessible depuis l'explorer (section **Network nodes**, lien ⛭ par nœud découvert) et
+expose, en JSON et via une UI :
+
+| Route        | Contenu                                                                     |
+| ------------ | --------------------------------------------------------------------------- |
+| `/monitor`   | UI : stats de run, topologie réseau, graphe de forks, mempool, logs         |
+| `/stats`     | Rôle, hauteur, pairs, validateurs/quorum, uptime, compteurs (proposed/finalized/accepted/sigs/tx) |
+| `/mempool`   | Transactions en attente (ordre, premium, type, payload)                     |
+| `/logs`      | Logs consensus récents en mémoire (PROPOSED / FINALIZED / ACCEPTED / sync)  |
+| `/graph`     | DAG des blocs (chaîne canonique vs forks vs pending) pour le graphe         |
+| `/block/<h>` | Détail d'un bloc (clic dans le graphe)                                       |
+
+La **topologie** est navigable : un clic sur un pair ouvre **son** `/monitor` (on parcourt le mesh,
+chaque nœud montrant sa propre vue). Le **graphe de chaîne** met en évidence la chaîne canonique et
+fait apparaître branches/forks et candidats *pending* ; un clic sur un bloc affiche son détail.
 
 ---
 

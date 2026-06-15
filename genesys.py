@@ -168,10 +168,11 @@ def main():
 
     ready = all(wait_for(f"http://127.0.0.1:{port}/status") for _, _, port in NODES)
     print("\n=== Demo blockchain running (mesh) ===")
-    print(f"  Explorer : http://127.0.0.1:{EXPLORER_PORT}   (try /governance)")
-    print(f"  Archive  : {archive_url}   (no wallet, creates genesis, sync source)")
+    print(f"  Explorer : http://127.0.0.1:{EXPLORER_PORT}   (Network nodes · /governance)")
+    print(f"  Archive  : {archive_url}/monitor   (no wallet, creates genesis, sync source)")
     for name, role, port in NODES:
-        print(f"  {name:11s} role={role:9s} http://127.0.0.1:{port}  --bootstrap {archive_url}")
+        print(f"  {name:11s} role={role:9s} http://127.0.0.1:{port}/monitor  --bootstrap {archive_url}")
+    print("  (each node exposes /monitor: mempool, logs, run stats, fork graph, topology)")
     print(f"  quorum={cfg.QUORUM_PERCENT}%  difficulty={cfg.DIFFICULTY_BITS} bits  "
           f"offline_N={cfg.LIVENESS_OFFLINE_N}  miss_X={cfg.LIVENESS_MISS_X}  floor={cfg.VALIDATOR_FLOOR}")
     if not ready:
